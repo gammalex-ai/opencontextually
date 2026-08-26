@@ -17,10 +17,14 @@ dependencies = [
 dev = [
     "pytest",
 ]
+mcp = [
+    "mcp>=1.2,<2",
+]
 
 [project.scripts]
 opencontextually = "opencontextually.cli:main"
 octx = "opencontextually.cli:main"
+opencontextually-mcp = "opencontextually.mcp:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

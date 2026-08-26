@@ -32,14 +32,33 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     items, extra_exclusions = select(discovered, task)
     excerpts_dropped_over_budget = attach_excerpts(items, discovered, task)
 
+    # An item whose excerpts were all evicted by the package-wide budget
+    # is no longer a usable inclusion -- it has a reason but nothing to
+    # back it -- so it moves from `included` to the "over_budget"
+    # exclusion bucket instead of surviving as a reason-only entry. This
+    # happens *before* CHECK runs below, so both rules see the same
+    # "included" set that render()/to_dict() will actually report --
+    # otherwise a fully-evicted selection could still produce findings
+    # underneath a "No relevant context found" message.
+    fully_evicted = [item for item in items if not item.excerpts]
+    items = [item for item in items if item.excerpts]
+
     # CHECK: configuration_discrepancy. Lexical, high-precision/low-recall
-    # -- see checks.py. Runs over every discovered config/doc file (not
-    # just the ones selected for this task), because a config/doc value
-    # disagreement is a structural fact about the repo, independent of
-    # which task happened to be asked. Always recorded in
-    # trace["rules_run"] once it runs, whether or not it finds anything,
-    # so the render() footer accurately reports which checks ran.
-    conflicts = find_configuration_discrepancies(discovered)
+    # -- see checks.py. In principle a config/doc value disagreement is a
+    # structural fact about the repo, independent of which task happened
+    # to be asked -- so this scans every discovered config/doc file, not
+    # just the ones SELECT chose. But OpenContextually's contract is
+    # context *for a task*: when SELECT found nothing relevant to `task`
+    # (`items` is empty), a repo-wide finding is not this task's problem
+    # and must not be volunteered underneath a "No relevant context found
+    # for this task" message -- that combination reads as self-
+    # contradictory (see tests/test_no_relevant_context.py). So this rule
+    # only runs once SELECT has actually included something; an empty
+    # selection short-circuits to no conflicts, same as test_reference_gap
+    # already does for its own emptiness case below. Still always recorded
+    # in trace["rules_run"], so the render() footer accurately reports
+    # which checks ran regardless of whether either found something.
+    conflicts = find_configuration_discrepancies(discovered) if items else []
 
     # CHECK: test_reference_gap. Lexical, high-precision/low-recall -- see
     # checks.py. Runs only over the files SELECT actually chose for this
@@ -49,13 +68,6 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # finds anything, so the render() footer accurately reports which
     # checks ran.
     missing = find_test_reference_gaps(items, discovered, task, conflicts=conflicts)
-
-    # An item whose excerpts were all evicted by the package-wide budget
-    # is no longer a usable inclusion -- it has a reason but nothing to
-    # back it -- so it moves from `included` to the "over_budget"
-    # exclusion bucket instead of surviving as a reason-only entry.
-    fully_evicted = [item for item in items if not item.excerpts]
-    items = [item for item in items if item.excerpts]
 
     excluded_by_reason = dict(excluded_by_reason)
     excluded_by_reason.update(extra_exclusions)
