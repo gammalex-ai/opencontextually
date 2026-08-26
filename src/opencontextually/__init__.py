@@ -41,5 +41,5 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         missing=[],
         excluded_count=excluded_count,
         excluded_by_reason=excluded_by_reason,
-        trace={"rules_run": ["lexical_selection"]},
+        trace={"rules_run": ["lexical_selection", "transitive_import_expansion"]},
     )

@@ -4,12 +4,13 @@ section.
 Runs `get_context("fix the authentication bug", root=examples/auth_bug)`
 against the demo fixture and checks the ten assertions listed in the plan.
 
-Assertions 1, 3, 4, 5, 8 must pass today (lexical selection alone gets
-there). Assertions 2, 6, 7, 9, 10 depend on features that are explicitly
-out of scope for this step (transitive import expansion, the two CHECK
-rules, and bounded excerpt extraction) and are marked
-`xfail(strict=True)` so they fail for real today and turn into real
-failures -- not silent passes -- if the underlying feature regresses.
+Assertions 1, 2, 3, 4, 5, 8 pass today. Assertion 2 (session.py included via
+transitive import expansion, with provenance naming the middleware.py import
+edge) was un-xfailed at step 5. Assertions 6, 7, 9, 10 depend on features
+that are explicitly out of scope for this step (the two CHECK rules and
+bounded excerpt extraction) and are marked `xfail(strict=True)` so they fail
+for real today and turn into real failures -- not silent passes -- if the
+underlying feature regresses.
 """
 
 from __future__ import annotations
@@ -46,16 +47,11 @@ def test_middleware_included():
 
 
 # --- 2: session.py included, provenance names the import edge ------------
-# Requires transitive import expansion (step 5). middleware.py imports
-# session.py, but plain lexical scoring has no term match for session.py
-# today, so it is not selected at all yet.
+# middleware.py imports session.py; plain lexical scoring has no term match
+# for session.py, so it is only reachable via transitive import expansion
+# (step 5). This is the hypothesis assertion.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="transitive import expansion not implemented until step 5; "
-    "session.py is only reachable via the middleware.py import edge",
-)
 def test_session_included_via_import_provenance():
     package = _get_package()
     item = _find(package, "src/users/session.py")
