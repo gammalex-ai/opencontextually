@@ -60,8 +60,17 @@ MAX_PACKAGE_BYTES = 60_000
 
 # Span weights used only to rank *which* spans survive the per-file and
 # package-wide caps -- not exposed on the item itself.
+#
+# Priority order (step 7): symbol definitions > config key lines > doc
+# headings/assertions > everything else. The "everything else" tier
+# (WEIGHT_MATCHED_LINE, bare content-frequency lines) is only used as a
+# fallback when a file has no spans in any higher tier -- see
+# attach_excerpts(). This is what keeps prose/docstring sentences out of
+# files that already have a structural match.
 WEIGHT_IMPORTED_SYMBOL = 100.0
 WEIGHT_MATCHED_SYMBOL = 50.0
+WEIGHT_CONFIG_KEY = 40.0
+WEIGHT_DOC_ASSERTION = 30.0
 WEIGHT_MATCHED_LINE = 1.0
 
 REDACTED = "«redacted»"
@@ -138,12 +147,47 @@ def _path_segments(path: str) -> list[str]:
     return segments
 
 
-def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, list[str]]:
+def _build_reason(
+    role: str,
+    filename_terms: list[str],
+    symbol_names: list[str],
+    content_term_counts: dict[str, int],
+) -> str:
+    """Turn the raw signals that made a file score above threshold into a
+    short, human sentence fragment -- not a telemetry dump.
+
+    Leads with the strongest signal (matching the score weighting:
+    filename > symbol > content), never concatenates multiple signals with
+    semicolons, never surfaces a raw score or occurrence count, and never
+    emits a bare "matched".
+    """
+    if filename_terms:
+        return f"filename matches '{filename_terms[0]}'"
+
+    if symbol_names:
+        return f"defines {symbol_names[0]}"
+
+    if content_term_counts:
+        # Strongest content signal: the term mentioned most often.
+        term = max(content_term_counts, key=lambda t: content_term_counts[t])
+        if role == "docs":
+            return f"defines {term} requirements"
+        if role == "config":
+            return f"configuration referenced by {term} code"
+        if role == "test":
+            return "tests for affected functionality"
+        if role == "source":
+            return f"references {term}"
+        return f"mentions {term}"
+
+    return "matches task terms"
+
+
+def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, str]:
     """Score a single discovered file against `terms`, returning
-    (score, reason_fragments).
+    (score, reason).
     """
     score = 0.0
-    reasons: list[str] = []
     matched_any = False
 
     # --- filename / path segment match: highest-weight signal ---
@@ -152,8 +196,6 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
     if filename_terms:
         score += WEIGHT_FILENAME * len(filename_terms)
         matched_any = True
-        for t in filename_terms:
-            reasons.append(f"filename matches '{t}'")
 
     content = ""
     try:
@@ -162,6 +204,7 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
         content = ""
 
     # --- Python symbol definitions ---
+    symbol_names: list[str] = []
     if discovered_file.path.endswith(".py") and content:
         tree = None
         try:
@@ -172,14 +215,17 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     name_lower = node.name.lower()
+                    node_matched = False
                     for t in terms:
                         if t in name_lower:
                             score += WEIGHT_SYMBOL
                             matched_any = True
-                            kind = "class" if isinstance(node, ast.ClassDef) else "function"
-                            reasons.append(f"defines {kind} {node.name}")
+                            node_matched = True
+                    if node_matched:
+                        symbol_names.append(node.name)
 
     # --- damped content term frequency ---
+    content_term_counts: dict[str, int] = {}
     if content:
         content_lower = content.lower()
         for t in terms:
@@ -187,15 +233,14 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
             if count > 0:
                 score += min(CONTENT_CAP, CONTENT_MULT * math.log(1 + count))
                 matched_any = True
-                if not filename_terms and not any(t in r for r in reasons):
-                    reasons.append(f"mentions '{t}' {count}x")
+                content_term_counts[t] = count
 
     # --- role bonus ---
     if matched_any and discovered_file.role in ROLE_BONUS_ROLES:
         score += ROLE_BONUS
-        reasons.append(f"{discovered_file.role} file matching task terms")
 
-    return score, reasons
+    reason = _build_reason(discovered_file.role, filename_terms, symbol_names, content_term_counts)
+    return score, reason
 
 
 def _module_parts(rel_path: str) -> tuple[tuple[str, ...], bool]:
@@ -478,14 +523,62 @@ def _imported_symbol_spans(content: str, names: set[str]) -> list[tuple[int, int
 
 
 def _matched_line_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
-    """One-line spans for every line containing a task term -- config key
-    lines, doc assertion lines, and a generic fallback for everything
-    else. Adjacent hits get merged into a single readable span later.
+    """One-line spans for every line containing a task term. This is the
+    lowest-priority, "everything else" tier -- used only as a fallback
+    when a file has no config-key, doc-heading, or symbol-definition spans
+    (see attach_excerpts()), so it does not pull in arbitrary prose lines
+    from a file that already has a structural match.
     """
     spans = []
     for lineno, line in enumerate(content.splitlines(), start=1):
         line_lower = line.lower()
         if any(t in line_lower for t in terms):
+            spans.append((lineno, lineno))
+    return spans
+
+
+_CONFIG_KEY_LINE_RE = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_.\-]*\s*[:=]")
+
+
+def _config_key_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
+    """One-line spans for `key: value` / `key = value` lines whose key or
+    value carries a task term -- the specific config key lines, not
+    arbitrary comment prose. Comment lines are skipped even if they
+    happen to contain a term (that case falls through to the generic
+    fallback tier instead).
+    """
+    spans = []
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not _CONFIG_KEY_LINE_RE.match(stripped):
+            continue
+        if any(t in line.lower() for t in terms):
+            spans.append((lineno, lineno))
+    return spans
+
+
+def _doc_heading_and_assertion_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
+    """One-line spans for a doc heading (`#`/`##`/...) that carries a task
+    term, plus every non-blank line under it until the next heading -- the
+    assertion lines the heading is introducing. A heading that does not
+    match a term contributes nothing, even if a line under it happens to
+    mention one (that line is still reachable via the generic fallback
+    tier if nothing better exists in the file).
+    """
+    spans = []
+    under_matching_heading = False
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            if any(t in line.lower() for t in terms):
+                spans.append((lineno, lineno))
+                under_matching_heading = True
+            else:
+                under_matching_heading = False
+            continue
+        if under_matching_heading and stripped:
             spans.append((lineno, lineno))
     return spans
 
@@ -645,20 +738,41 @@ def attach_excerpts(
         if not content:
             continue
 
-        weighted_spans: list[tuple[int, int, float]] = []
+        # Structural spans, highest priority first: the definitions
+        # actually imported (import-reached files), matched symbol
+        # definitions, config key lines, doc headings and their assertion
+        # lines. A bare content-frequency line (the "everything else"
+        # tier) is only used as a fallback when a file has none of these
+        # -- otherwise it pads out excerpts with arbitrary prose that
+        # happens to contain a term (the middleware.py docstring-sentence
+        # problem this step fixes).
+        structural_spans: list[tuple[int, int, float]] = []
 
         if item.path.endswith(".py"):
             importer = _importer_of(item.path, item.provenance)
             if importer:
                 imported_names = import_name_graph.get(importer, {}).get(item.path, set())
                 for start, end in _imported_symbol_spans(content, imported_names):
-                    weighted_spans.append((start, end, WEIGHT_IMPORTED_SYMBOL))
+                    structural_spans.append((start, end, WEIGHT_IMPORTED_SYMBOL))
 
             for start, end in _matched_symbol_spans(content, terms):
-                weighted_spans.append((start, end, WEIGHT_MATCHED_SYMBOL))
+                structural_spans.append((start, end, WEIGHT_MATCHED_SYMBOL))
 
-        for start, end in _matched_line_spans(content, terms):
-            weighted_spans.append((start, end, WEIGHT_MATCHED_LINE))
+        if discovered_file.role == "config":
+            for start, end in _config_key_spans(content, terms):
+                structural_spans.append((start, end, WEIGHT_CONFIG_KEY))
+
+        if discovered_file.role == "docs":
+            for start, end in _doc_heading_and_assertion_spans(content, terms):
+                structural_spans.append((start, end, WEIGHT_DOC_ASSERTION))
+
+        if structural_spans:
+            weighted_spans = structural_spans
+        else:
+            weighted_spans = [
+                (start, end, WEIGHT_MATCHED_LINE)
+                for start, end in _matched_line_spans(content, terms)
+            ]
 
         item.excerpts = _build_excerpts(content, weighted_spans)
 
@@ -715,10 +829,10 @@ def select(
     """
     terms = tokenize(task)
 
-    scored: list[tuple[float, DiscoveredFile, list[str]]] = []
+    scored: list[tuple[float, DiscoveredFile, str]] = []
     for discovered_file in discovered:
-        score, reasons = _analyze(discovered_file, terms)
-        scored.append((score, discovered_file, reasons))
+        score, reason = _analyze(discovered_file, terms)
+        scored.append((score, discovered_file, reason))
 
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
     below_count = len(scored) - len(above)
@@ -734,15 +848,20 @@ def select(
         ContextItem(
             path=discovered_file.path,
             role=discovered_file.role,
-            reason="; ".join(reasons) if reasons else "matches task terms",
+            reason=reason,
             score=score,
         )
-        for score, discovered_file, reasons in kept
+        for score, discovered_file, reason in kept
     ]
 
     expanded_items, expansion_over_cap_count = expand_transitively(seed_items, discovered)
 
+    # Merge seeds and expanded items into a single ranking -- score
+    # descending across both groups, tie-broken on path -- rather than
+    # appending expanded items after seeds regardless of score.
     combined = seed_items + expanded_items
+    combined.sort(key=lambda item: (-item.score, item.path))
+
     final_items = combined[:MAX_INCLUDED]
     final_over_cap_count = len(combined) - len(final_items)
 

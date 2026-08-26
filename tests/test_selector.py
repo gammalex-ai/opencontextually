@@ -90,6 +90,45 @@ def test_select_ignores_syntax_error_python_file(tmp_path):
     assert any(item.path == "broken_auth.py" for item in items)
 
 
+def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
+    # Regression test for a ranking bug: expanded (transitively-reached)
+    # items were appended after all seeds regardless of score, instead of
+    # being merged into the ranking. middleware.py imports session.py;
+    # session.py's decayed score can still land above some low-scoring
+    # seeds, and it must be ranked accordingly, not stuck at the end.
+    _write(
+        tmp_path / "src" / "auth" / "middleware.py",
+        "from src.users.session import SessionStore\n\n"
+        "class AuthenticationError(Exception):\n    pass\n",
+    )
+    _write(
+        tmp_path / "src" / "users" / "session.py",
+        "class SessionStore:\n    pass\n",
+    )
+    # A weak seed: content-only match, no filename or symbol hit, so it
+    # scores far below both middleware.py and the decayed session.py.
+    _write(
+        tmp_path / "docs" / "notes.md",
+        "authentication is mentioned here exactly once.\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra = select(discovered, "fix the authentication bug")
+
+    scores = [item.score for item in items]
+    assert scores == sorted(scores, reverse=True), scores
+
+    paths_in_order = [item.path for item in items]
+    assert "src/users/session.py" in paths_in_order
+    assert "docs/notes.md" in paths_in_order
+    # session.py (import-reached from a strong seed) must outrank the
+    # weak content-only seed, even though it was appended after seeds by
+    # the old (buggy) code.
+    assert paths_in_order.index("src/users/session.py") < paths_in_order.index(
+        "docs/notes.md"
+    )
+
+
 def test_cli_exits_2_on_bad_root(tmp_path):
     bad_root = tmp_path / "does_not_exist"
     result = subprocess.run(
