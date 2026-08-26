@@ -25,7 +25,7 @@ import math
 import re
 
 from .discovery import DiscoveredFile
-from .selector import tokenize
+from .selector import _looks_like_secret_key
 
 RULE_ID = "configuration_discrepancy"
 RULE_ID_TEST_REFERENCE_GAP = "test_reference_gap"
@@ -33,8 +33,10 @@ RULE_ID_TEST_REFERENCE_GAP = "test_reference_gap"
 # Key names that look like they hold a secret are never reported -- even
 # though only numeric scalars can become a finding in practice, this is a
 # defense-in-depth guard so a secret-looking key can never appear in a
-# conflicts entry.
-_SECRET_KEY_SUBSTRINGS = ("key", "token", "secret", "password", "passwd", "credential")
+# conflicts entry. Shares its definition (including the "max_tokens" vs.
+# "access_token" distinction) with selector.py's excerpt redaction, via
+# _looks_like_secret_key, so a key is judged sensitive or not the same way
+# everywhere in the package.
 
 _UNIT_SECONDS = {
     "ms": 0.001,
@@ -344,7 +346,7 @@ def find_configuration_discrepancies(discovered: list[DiscoveredFile]) -> list[d
 
         for key, raw_value, lineno in entries:
             key_lower = key.lower()
-            if any(sub in key_lower for sub in _SECRET_KEY_SUBSTRINGS):
+            if _looks_like_secret_key(key):
                 continue
 
             core_tokens = _key_tokens(key) - _UNIT_WORDS
@@ -418,15 +420,57 @@ def find_configuration_discrepancies(discovered: list[DiscoveredFile]) -> list[d
 #   - only terms/keys found in files SELECT already chose for this task
 #     (not every discovered source/config file, unlike
 #     configuration_discrepancy, which is a repo-wide structural fact);
-#   - only two term sources: literal task terms, and multi-word concepts
-#     decomposed from Python def/class names and config key paths. A
-#     single generic word is never enough on its own to be "a concept" --
-#     same discipline as configuration_discrepancy's two-token rule --
-#     except for a task term itself, which is already a deliberate,
-#     non-generic word by the time it reaches here (stopwords and short
-#     tokens are dropped by tokenize()).
+#   - concepts are multi-word only, decomposed from Python def/class names
+#     and config key paths -- a single generic word is never enough on its
+#     own to be "a concept" (same discipline as configuration_discrepancy's
+#     two-token rule). An earlier version of this rule also spawned a
+#     concept from any literal single-word task-term mention anywhere in a
+#     file's text, on the theory that a task term is inherently
+#     non-generic. Real-repo evaluation (step 11) disproved that: a task
+#     like "the MCP server tool schema is wrong" tokenizes to ordinary
+#     words ("server", "tool", "wrong") that show up incidentally all over
+#     a real codebase, producing exactly the noise this rule exists to
+#     avoid. Task terms still matter -- they drive which files SELECT
+#     picks, and they are why the def/class-name and config-key concepts
+#     below get considered in the first place -- but they no longer spawn
+#     a finding purely from being present as text.
 #   - secret-looking config keys are never turned into a concept.
 #
+# --- real-repo tuning (step 11): rank/cap findings -------------------------
+#
+# The version of this rule described above turns *every* unreferenced
+# def/class name and *every* unreferenced config key into its own finding.
+# On the flagship demo fixture that was six findings for one task -- most
+# of them true but trivial (no test calls a private helper method by name)
+# rather than genuinely risky. A wall of weak-but-true findings erodes
+# trust exactly the way a false positive does: the developer stops
+# reading. So a finding only survives if something the tool *already
+# knows* corroborates that this particular gap matters, not just that it
+# is technically true:
+#
+#   - a config-key gap is corroborated when that exact key is *also* the
+#     subject of a configuration_discrepancy conflict -- an independent
+#     rule has already flagged this setting as inconsistent, so "no test
+#     covers it either" is compounding evidence, not a first guess.
+#   - a source-symbol gap is corroborated when the symbol's call site is
+#     the test of an `if` that raises or returns in its body, elsewhere in
+#     the selected code -- i.e. it is not merely defined-and-uncalled, it
+#     is a decision point another part of the codebase branches on, which
+#     is what makes an untested path risky rather than merely unused.
+# An earlier version of this list also had a third tier -- any literal
+# task-term mention, uncorroborated -- on the theory that a task term is
+# inherently non-generic. Real-repo evaluation showed otherwise (see the
+# module docstring above): that tier is gone, not just deprioritized.
+#
+# This is a ranking signal built from facts the pipeline already computed
+# (another rule's finding, real control-flow structure) -- not an invented
+# confidence score. MAX_TEST_REFERENCE_GAP_FINDINGS is a hard backstop on
+# top of that so a repo that happens to produce many corroborated findings
+# still cannot become a wall of text.
+MAX_TEST_REFERENCE_GAP_FINDINGS = 5
+
+_STRENGTH_CORROBORATED = 2
+
 # A project with **no test files at all** is a special case: naively this
 # rule would then flag every single term as a gap, which is not new
 # information -- it is one fact ("this project has no tests") repeated
@@ -570,57 +614,127 @@ def _concept_referenced(words: list[str], test_stems: set[str]) -> bool:
     return all(_stem(word) in test_stems for word in words)
 
 
-def _source_symbol_concepts(content: str) -> list[tuple[list[str], int]]:
+def _source_symbol_concepts(content: str) -> list[tuple[list[str], int, str]]:
     """Multi-word concepts decomposed from Python def/class names, e.g.
     `is_session_expired` -> ["session", "expired"] (the filler word "is"
     is dropped). Single-word names never produce a concept here -- see
-    module docstring.
+    module docstring. The third element is the raw symbol name itself
+    (not word-split), used to check corroboration against gated call
+    sites -- see _gated_call_names().
     """
     try:
         tree = ast.parse(content)
     except SyntaxError:
         return []
 
-    concepts: list[tuple[list[str], int]] = []
+    concepts: list[tuple[list[str], int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             words = _meaningful_words(_split_identifier_words(node.name))
             if len(words) >= _MIN_CONCEPT_WORDS:
-                concepts.append((words, node.lineno))
+                concepts.append((words, node.lineno, node.name))
     return concepts
 
 
-def _config_key_concepts(path: str, content: str) -> list[tuple[list[str], int]]:
+def _config_key_concepts(path: str, content: str) -> list[tuple[list[str], int, str]]:
     """Multi-word concepts decomposed from config key paths, e.g.
     `session.timeout_minutes` -> ["session", "timeout", "minutes"].
     Secret-looking keys are skipped entirely, same defense-in-depth
-    posture as configuration_discrepancy.
+    posture as configuration_discrepancy. The third element is the raw
+    dotted key itself, used to check corroboration against
+    configuration_discrepancy conflicts.
     """
-    concepts: list[tuple[list[str], int]] = []
+    concepts: list[tuple[list[str], int, str]] = []
     for key, _value, lineno in _parse_config_entries(path, content):
-        key_lower = key.lower()
-        if any(sub in key_lower for sub in _SECRET_KEY_SUBSTRINGS):
+        if _looks_like_secret_key(key):
             continue
         words: list[str] = []
         for segment in key.split("."):
             words.extend(_split_identifier_words(segment))
         words = _meaningful_words(words)
         if len(words) >= _MIN_CONCEPT_WORDS:
-            concepts.append((words, lineno))
+            concepts.append((words, lineno, key))
     return concepts
 
 
-def find_test_reference_gaps(items: list, discovered: list[DiscoveredFile], task: str) -> list[dict]:
-    """Find task terms and config keys with real presence in the
+def _short_circuits(stmts: list[ast.stmt]) -> bool:
+    """True if any statement in `stmts` raises, or returns a non-None
+    value -- the shape of a guard clause, as opposed to a plain
+    side-effecting call.
+    """
+    for stmt in stmts:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Raise):
+                return True
+            if isinstance(node, ast.Return) and node.value is not None:
+                return True
+    return False
+
+
+def _call_names_in(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            func = sub.func
+            if isinstance(func, ast.Attribute):
+                names.add(func.attr)
+            elif isinstance(func, ast.Name):
+                names.add(func.id)
+    return names
+
+
+def _gated_call_names(items: list, discovered: list[DiscoveredFile]) -> set[str]:
+    """Names of symbols called as the test of an `if` whose body raises or
+    returns, anywhere in the selected Python source. This is the
+    corroboration signal for a source-symbol test_reference_gap finding --
+    see the "real-repo tuning" note above.
+    """
+    discovered_index = {f.path: f for f in discovered}
+    gated: set[str] = set()
+    for item in items:
+        if item.role != "source" or not item.path.endswith(".py"):
+            continue
+        discovered_file = discovered_index.get(item.path)
+        if discovered_file is None:
+            continue
+        try:
+            content = discovered_file.abs_path.read_text(errors="replace")
+        except OSError:
+            continue
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            call_names = _call_names_in(node.test)
+            if call_names and _short_circuits(node.body):
+                gated.update(call_names)
+    return gated
+
+
+def find_test_reference_gaps(
+    items: list,
+    discovered: list[DiscoveredFile],
+    task: str,
+    conflicts: list[dict] | None = None,
+) -> list[dict]:
+    """Find def/class names and config keys with real presence in the
     *selected* source/config files (`items`) that no discovered test file
     references.
 
     `items` is the list of ContextItem produced by SELECT for this task
-    -- only files SELECT actually chose are scanned for terms, per the
+    -- only files SELECT actually chose are scanned for concepts, per the
     v0.1 plan. `discovered` supplies the full set of discovered files, so
     every discovered test file (selected or not) can be checked for a
     reference, matching the "no discovered test file references them"
-    wording in the plan.
+    wording in the plan. `conflicts` is the configuration_discrepancy
+    findings for this run (may be empty/None), used only as a
+    corroboration signal -- see the "real-repo tuning" note above. `task`
+    is accepted for interface symmetry with the rest of CHECK/SELECT but
+    is not itself a term source -- see the "real-repo tuning" note above
+    for why literal task-term mentions were removed as a finding source.
 
     Returns a list of finding dicts, each carrying at minimum: "rule"
     (the rule id), "term" (the concept, human-readable), "path"/"line"
@@ -628,7 +742,8 @@ def find_test_reference_gaps(items: list, discovered: list[DiscoveredFile], task
     the gap), and a factual "message". Returns [] when nothing meets the
     bar above -- never a "nothing missing" placeholder entry, and never
     a finding when there are no discovered test files at all (see module
-    docstring).
+    docstring). Ranked by corroboration strength and capped at
+    MAX_TEST_REFERENCE_GAP_FINDINGS.
     """
     test_files = [f for f in discovered if f.role == "test"]
     if not test_files:
@@ -640,16 +755,22 @@ def find_test_reference_gaps(items: list, discovered: list[DiscoveredFile], task
 
     test_stems = _test_reference_stems(test_files)
     discovered_index = {f.path: f for f in discovered}
-    terms = tokenize(task)
 
-    # concept key (sorted unique words) -> (display words, path, line) for
-    # the first occurrence encountered, so each concept is reported once.
-    concepts: dict[tuple[str, ...], tuple[list[str], str, int]] = {}
+    corroborated_settings = {
+        c["setting"] for c in (conflicts or []) if c.get("rule") == RULE_ID and c.get("setting")
+    }
+    gated_names = _gated_call_names(items, discovered)
 
-    def _record(words: list[str], path: str, lineno: int) -> None:
+    # concept key (sorted unique words) -> (display words, path, line,
+    # kind, meta) for the first occurrence encountered, so each concept is
+    # reported once. `kind`/`meta` carry what is needed to score
+    # corroboration strength below without re-deriving it.
+    concepts: dict[tuple[str, ...], tuple[list[str], str, int, str, str]] = {}
+
+    def _record(words: list[str], path: str, lineno: int, kind: str, meta: str) -> None:
         key = tuple(sorted(set(words)))
         if key and key not in concepts:
-            concepts[key] = (words, path, lineno)
+            concepts[key] = (words, path, lineno, kind, meta)
 
     for item in selected:
         discovered_file = discovered_index.get(item.path)
@@ -662,30 +783,36 @@ def find_test_reference_gaps(items: list, discovered: list[DiscoveredFile], task
         if not content:
             continue
 
-        # -- task terms with real (literal) presence in this file --
-        content_lower = content.lower()
-        lines = content.splitlines()
-        for term in terms:
-            if term not in content_lower:
-                continue
-            lineno = next(
-                (idx for idx, line in enumerate(lines, start=1) if term in line.lower()),
-                1,
-            )
-            _record([term], item.path, lineno)
-
         # -- def/class names and config keys defined in this file --
         if item.role == "source" and item.path.endswith(".py"):
-            for words, lineno in _source_symbol_concepts(content):
-                _record(words, item.path, lineno)
+            for words, lineno, name in _source_symbol_concepts(content):
+                _record(words, item.path, lineno, "source_symbol", name)
         elif item.role == "config":
-            for words, lineno in _config_key_concepts(item.path, content):
-                _record(words, item.path, lineno)
+            for words, lineno, key in _config_key_concepts(item.path, content):
+                _record(words, item.path, lineno, "config_key", key)
 
-    findings: list[dict] = []
-    for words, path, lineno in concepts.values():
+    scored: list[tuple[int, list[str], str, int]] = []
+    for words, path, lineno, kind, meta in concepts.values():
         if _concept_referenced(words, test_stems):
             continue
+
+        if kind == "config_key" and meta in corroborated_settings:
+            strength = _STRENGTH_CORROBORATED
+        elif kind == "source_symbol" and meta in gated_names:
+            strength = _STRENGTH_CORROBORATED
+        else:
+            strength = 0
+
+        if strength <= 0:
+            continue
+        scored.append((strength, words, path, lineno))
+
+    # Strongest first; deterministic tie-break on path/line/term.
+    scored.sort(key=lambda s: (-s[0], s[2], s[3], " ".join(s[1])))
+    kept = scored[:MAX_TEST_REFERENCE_GAP_FINDINGS]
+
+    findings: list[dict] = []
+    for _strength, words, path, lineno in kept:
         term_phrase = " ".join(words)
         findings.append(
             {

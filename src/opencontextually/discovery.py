@@ -28,6 +28,24 @@ DENYLIST_DIRS = {".git", ".hg", ".svn", "__pycache__", "node_modules", ".venv"}
 CONFIG_EXTENSIONS = {".yaml", ".yml", ".toml", ".ini", ".env", ".json", ".cfg"}
 DOCS_EXTENSIONS = {".md", ".rst", ".txt"}
 
+# Directories that hold bulk data, vendored code, or build output rather
+# than hand-written project configuration or documentation, even when a
+# file inside them has a "config-like" or "docs-like" extension -- e.g.
+# data/results/2026-05-26/openai_quality.json is a benchmark output, not
+# app config, and should not earn the config role bonus or be scanned by
+# configuration_discrepancy. Source code inside these directories (rare,
+# but real -- a data-processing script under data/) is unaffected; only
+# the config/docs reclassification below is skipped for it. Selector.py's
+# DATA_PATH_PENALTY down-weights these paths' *scores* directly; this set
+# is imported from there rather than duplicated.
+DATA_DIR_SEGMENTS = {
+    "data", "datasets", "fixtures", "fixture", "testdata", "test-data",
+    "__snapshots__", "vendor", "dist", "build", "generated",
+}
+_SOURCE_EXTENSIONS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".c", ".cpp", ".h", ".hpp",
+}
+
 REASON_IGNORED = "ignored"
 REASON_BINARY = "binary"
 REASON_OVERSIZE = "oversize"
@@ -76,16 +94,19 @@ def _classify_role(rel_path: str) -> str:
     parts = rel_path.split("/")
     name = parts[-1]
     ext = Path(name).suffix.lower()
+    dir_parts = parts[:-1]
 
-    if "tests" in parts[:-1] or name.startswith("test_") or name.endswith("_test.py"):
+    if "tests" in dir_parts or name.startswith("test_") or name.endswith("_test.py"):
         return "test"
-    if ext in CONFIG_EXTENSIONS or "config" in parts[:-1]:
+
+    if ext not in _SOURCE_EXTENSIONS and any(p.lower() in DATA_DIR_SEGMENTS for p in dir_parts):
+        return "other"
+
+    if ext in CONFIG_EXTENSIONS or "config" in dir_parts:
         return "config"
-    if ext in DOCS_EXTENSIONS or "docs" in parts[:-1]:
+    if ext in DOCS_EXTENSIONS or "docs" in dir_parts:
         return "docs"
-    if ext == ".py" or ext in {
-        ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".c", ".cpp", ".h", ".hpp",
-    }:
+    if ext in _SOURCE_EXTENSIONS:
         return "source"
     return "other"
 

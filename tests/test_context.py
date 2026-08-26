@@ -38,5 +38,5 @@ def test_render_and_to_dict_roundtrip():
 def test_empty_package_renders_without_error():
     package = ContextPackage(task="do something")
     rendered = package.render()
-    assert "Included: (none)" in rendered
+    assert "No relevant context found for this task." in rendered
     assert package.to_dict()["included"] == []

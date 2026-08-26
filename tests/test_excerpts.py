@@ -183,6 +183,51 @@ def test_redact_leaves_ordinary_lines_untouched():
     assert redact_text(line) == line
 
 
+# --- step 11: real-repo false positives -----------------------------------
+#
+# Both regressions below were observed running the tool against a real
+# repository (~/Dali), not invented -- see the step-11 evaluation notes.
+
+
+def test_redact_does_not_flag_token_count_keys_as_secrets():
+    """"token" alone is not a secret indicator: "max_tokens"/"num_tokens"
+    are ordinary LLM parameters, not credentials.
+    """
+    redacted = redact_text("max_tokens: Must be a positive integer.")
+    assert redacted == "max_tokens: Must be a positive integer."
+
+    redacted = redact_text("num_tokens = 4096")
+    assert "«redacted»" not in redacted
+
+
+def test_redact_still_flags_real_token_keys_as_secrets():
+    redacted = redact_text("access_token: eyabcdefghijklmnopqrstuvwxyz0123456789")
+    assert "eyabcdefghijklmnopqrstuvwxyz0123456789" not in redacted
+    assert "access_token" in redacted
+
+
+def test_redact_does_not_eat_long_identifiers_without_digits():
+    """A long, all-letters snake_case identifier (a real test name, 32
+    chars) matches the generic high-entropy shape by length alone but is
+    not remotely a secret -- it should survive untouched.
+    """
+    line = "    def test_needs_verification_excluded(self):"
+    assert redact_text(line) == line
+
+
+def test_redact_does_not_eat_versioned_urls_or_paths():
+    """A versioned URL or repo-relative file path is long, contains a
+    digit (a version number), and is well over the generic entropy
+    pattern's length floor -- but it is not a secret and should not be
+    torn apart by redaction.
+    """
+    url_line = '  "$id": "https://example.dev/schemas/canonical-citation-v1.json",'
+    assert redact_text(url_line) == url_line
+
+    path_line = 'corpus_path = Path("data/benchmark/tier1/corpus/citation_cases.json")'
+    assert redact_text(path_line) == path_line
+
+
 def test_redact_masks_standalone_high_entropy_token_without_key():
     redacted = redact_text("# leaked earlier: AKIAABCDEFGHIJKLMNOP")
     assert "AKIAABCDEFGHIJKLMNOP" not in redacted

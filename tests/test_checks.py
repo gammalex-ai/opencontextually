@@ -335,6 +335,18 @@ def test_unreferenced_concept_is_reported_with_evidence_location(tmp_path):
         tmp_path / "src" / "session.py",
         "def is_session_expired(session_id):\n    return True\n",
     )
+    # A source-symbol gap only survives the real-repo-tuning corroboration
+    # bar (see checks.py) when the symbol's call site gates control flow
+    # elsewhere -- an `if` whose test calls it and whose body raises or
+    # returns. Without this caller, is_session_expired would be a true but
+    # weak finding and is deliberately suppressed by find_test_reference_gaps.
+    _write(
+        tmp_path / "src" / "middleware.py",
+        "def authenticate(store, session_id):\n"
+        "    if is_session_expired(session_id):\n"
+        "        raise ValueError('expired')\n"
+        "    return session_id\n",
+    )
     _write(
         tmp_path / "tests" / "test_session.py",
         "def test_create_and_lookup():\n    assert True\n",
@@ -352,3 +364,96 @@ def test_unreferenced_concept_is_reported_with_evidence_location(tmp_path):
     assert finding["line"] == 1
     assert "add a test" not in finding["message"].lower()
     assert "missing" not in finding["message"].lower()
+
+
+# --- step 11: real-repo tuning ----------------------------------------------
+#
+# An earlier version of test_reference_gap turned every unreferenced
+# def/class name and every unreferenced config key into its own finding --
+# six findings for one task on the flagship demo fixture. These tests lock
+# in the corroboration bar added at step 11: an uncorroborated gap (a
+# plainly-called, ungated method; an undisputed config value) is real but
+# weak, and is deliberately suppressed.
+
+
+def test_ungated_method_call_produces_no_finding(tmp_path):
+    _write(
+        tmp_path / "src" / "session.py",
+        "def touch_session(session_id):\n    pass\n",
+    )
+    _write(
+        tmp_path / "src" / "middleware.py",
+        # Called, but unconditionally -- not gating an if/raise/return --
+        # so this is a plain side-effect call, not a decision point.
+        "def handle(store, session_id):\n"
+        "    touch_session(session_id)\n"
+        "    return session_id\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_session.py",
+        "def test_create_and_lookup():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "fix the session bug")
+
+    assert not any("touch" in f["term"] for f in findings)
+
+
+def test_undisputed_config_value_produces_no_finding(tmp_path):
+    _write(
+        tmp_path / "config" / "app.yaml",
+        "session:\n  cookie_name: session_id\n",
+    )
+    _write(
+        tmp_path / "src" / "app.py",
+        "def configure_session():\n    pass\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_app.py",
+        "def test_configure_session():\n    configure_session()\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    # No configuration_discrepancy conflict for this key -- it is not in
+    # dispute anywhere -- so a config-key gap should not fire either.
+    findings = find_test_reference_gaps(items, discovered, "fix the session config", conflicts=[])
+
+    assert not any("cookie" in f["term"] for f in findings)
+
+
+def test_config_gap_fires_only_when_corroborated_by_conflict(tmp_path):
+    _write(
+        tmp_path / "config" / "app.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "src" / "app.py",
+        "def configure_session():\n    pass\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_app.py",
+        "def test_configure_session():\n    configure_session()\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    without_conflict = find_test_reference_gaps(
+        items, discovered, "fix the session timeout", conflicts=[]
+    )
+    assert not any("timeout" in f["term"] for f in without_conflict)
+
+    conflict = {
+        "rule": "configuration_discrepancy",
+        "setting": "session.timeout_minutes",
+        "message": "session.timeout_minutes: config/app.yaml:2 declares 60, but docs say 30",
+    }
+    with_conflict = find_test_reference_gaps(
+        items, discovered, "fix the session timeout", conflicts=[conflict]
+    )
+    assert any("timeout" in f["term"] for f in with_conflict)

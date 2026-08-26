@@ -48,7 +48,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # recorded in trace["rules_run"] once it runs, whether or not it
     # finds anything, so the render() footer accurately reports which
     # checks ran.
-    missing = find_test_reference_gaps(items, discovered, task)
+    missing = find_test_reference_gaps(items, discovered, task, conflicts=conflicts)
 
     # An item whose excerpts were all evicted by the package-wide budget
     # is no longer a usable inclusion -- it has a reason but nothing to

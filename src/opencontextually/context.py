@@ -69,15 +69,23 @@ class ContextPackage:
                     for text_line in excerpt.text.splitlines():
                         lines.append(f"       {text_line}")
         else:
-            lines.append("Included: (none)")
+            lines.append("No relevant context found for this task.")
 
         if self.conflicts:
             lines.append("")
             lines.append(f"Conflicts ({len(self.conflicts)}):")
             for idx, conflict in enumerate(self.conflicts, start=1):
-                lines.append(f"  {idx}. {conflict.get('setting', conflict.get('rule', 'conflict'))}")
+                setting = conflict.get("setting", conflict.get("rule", "conflict"))
+                lines.append(f"  {idx}. {setting}")
                 message = conflict.get("message")
                 if message:
+                    # `message` is written as "<setting>: <details>" by
+                    # the rule that produced it; the setting name is
+                    # already the line above, so strip the duplicate
+                    # prefix rather than printing it twice.
+                    prefix = f"{setting}: "
+                    if message.startswith(prefix):
+                        message = message[len(prefix):]
                     lines.append(f"     {message}")
                 else:
                     doc = conflict.get("doc") or {}

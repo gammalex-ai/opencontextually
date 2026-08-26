@@ -68,6 +68,61 @@ def test_scoring_ranks_filename_and_symbol_matches_above_content_only(tmp_path):
     assert "session" in session_item.reason.lower()
 
 
+# --- step 11: real-repo tuning ---------------------------------------------
+#
+# Observed running the tool against a real, data-heavy repository
+# (~/Dali): a large benchmark-results JSON file outranked the source file
+# that actually implements the task, purely on repeated-content volume.
+
+
+def test_data_directory_file_is_down_weighted_below_real_source(tmp_path):
+    _write(
+        tmp_path / "src" / "scoring.py",
+        "def score_citation():\n    '''existence scoring'''\n    pass\n",
+    )
+    # A file under a recognizable data/ directory that happens to mention
+    # the task terms just as much (or more) should not outrank real source.
+    _write(
+        tmp_path / "data" / "results" / "citation_scoring_dump.json",
+        '{"citation": "scoring", "citation_scoring": "scoring citation scoring"}\n',
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra = select(discovered, "fix citation scoring")
+
+    paths_in_order = [item.path for item in items]
+    assert "src/scoring.py" in paths_in_order
+    if "data/results/citation_scoring_dump.json" in paths_in_order:
+        assert paths_in_order.index("src/scoring.py") < paths_in_order.index(
+            "data/results/citation_scoring_dump.json"
+        )
+
+
+def test_large_file_content_frequency_is_damped(tmp_path):
+    from opencontextually.selector import LARGE_FILE_BYTES, score_file, tokenize
+
+    small_content = "widget widget widget\n"
+    _write(tmp_path / "small.txt", small_content)
+
+    # Same repeated-term density, but padded well past LARGE_FILE_BYTES.
+    padding = "widget " * ((LARGE_FILE_BYTES // len("widget ")) + 1000)
+    _write(tmp_path / "large.txt", padding)
+
+    discovered, _reasons = discover(tmp_path)
+    small_file = next(f for f in discovered if f.path == "small.txt")
+    large_file = next(f for f in discovered if f.path == "large.txt")
+    assert large_file.size > LARGE_FILE_BYTES
+
+    terms = tokenize("fix the widget")
+    small_score = score_file(small_file, terms)
+    large_score = score_file(large_file, terms)
+
+    # The large file mentions "widget" far more often in absolute terms,
+    # but the per-file content-frequency score is capped and damped, so it
+    # should not run away to a wildly larger score than the small file.
+    assert large_score < small_score * 5
+
+
 def test_select_caps_at_max_seeds(tmp_path):
     from opencontextually.selector import MAX_SEEDS
 
