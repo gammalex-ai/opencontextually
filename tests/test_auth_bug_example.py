@@ -1,0 +1,208 @@
+"""First end-to-end test, per the v0.1 plan's "First end-to-end test"
+section.
+
+Runs `get_context("fix the authentication bug", root=examples/auth_bug)`
+against the demo fixture and checks the ten assertions listed in the plan.
+
+Assertions 1, 3, 4, 5, 8 must pass today (lexical selection alone gets
+there). Assertions 2, 6, 7, 9, 10 depend on features that are explicitly
+out of scope for this step (transitive import expansion, the two CHECK
+rules, and bounded excerpt extraction) and are marked
+`xfail(strict=True)` so they fail for real today and turn into real
+failures -- not silent passes -- if the underlying feature regresses.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from opencontextually import get_context
+
+FIXTURE_ROOT = Path(__file__).parent.parent / "examples" / "auth_bug"
+TASK = "fix the authentication bug"
+
+MAX_PACKAGE_BYTES = 60_000
+
+
+def _get_package():
+    return get_context(TASK, root=FIXTURE_ROOT)
+
+
+def _find(package, path: str):
+    for item in package.included:
+        if item.path == path:
+            return item
+    return None
+
+
+# --- 1: middleware.py included -------------------------------------------
+
+
+def test_middleware_included():
+    package = _get_package()
+    assert _find(package, "src/auth/middleware.py") is not None
+
+
+# --- 2: session.py included, provenance names the import edge ------------
+# Requires transitive import expansion (step 5). middleware.py imports
+# session.py, but plain lexical scoring has no term match for session.py
+# today, so it is not selected at all yet.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="transitive import expansion not implemented until step 5; "
+    "session.py is only reachable via the middleware.py import edge",
+)
+def test_session_included_via_import_provenance():
+    package = _get_package()
+    item = _find(package, "src/users/session.py")
+    assert item is not None
+    assert any("middleware.py" in step for step in item.provenance)
+
+
+# --- 3: docs/security.md included -----------------------------------------
+
+
+def test_security_doc_included():
+    package = _get_package()
+    assert _find(package, "docs/security.md") is not None
+
+
+# --- 4: config/auth.yaml included ------------------------------------------
+
+
+def test_auth_config_included():
+    package = _get_package()
+    assert _find(package, "config/auth.yaml") is not None
+
+
+# --- 5: tests/test_auth.py included ----------------------------------------
+
+
+def test_auth_test_file_included():
+    package = _get_package()
+    assert _find(package, "tests/test_auth.py") is not None
+
+
+# --- 6: configuration_discrepancy citing 30 vs 60, naming both files -----
+# Requires the configuration_discrepancy CHECK rule (step 8). Today
+# ContextPackage.conflicts is always [].
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="configuration_discrepancy CHECK rule not implemented until step 8",
+)
+def test_session_timeout_discrepancy_detected():
+    package = _get_package()
+    assert package.conflicts, "expected a configuration_discrepancy conflict"
+
+    matches = [
+        conflict
+        for conflict in package.conflicts
+        if conflict.get("rule") == "configuration_discrepancy"
+        and "30" in str(conflict)
+        and "60" in str(conflict)
+    ]
+    assert matches, package.conflicts
+
+    conflict = matches[0]
+    conflict_text = str(conflict)
+    assert "config/auth.yaml" in conflict_text
+    assert "docs/security.md" in conflict_text
+    assert "line" in conflict_text.lower()
+
+
+# --- 7: test_reference_gap for session expiration --------------------------
+# Requires the test_reference_gap CHECK rule (step 9). Today
+# ContextPackage.missing is always [].
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="test_reference_gap CHECK rule not implemented until step 9",
+)
+def test_session_expiration_reference_gap_detected():
+    package = _get_package()
+    assert package.missing, "expected a test_reference_gap entry"
+
+    matches = [
+        entry
+        for entry in package.missing
+        if entry.get("rule") == "test_reference_gap"
+        and "expir" in str(entry).lower()
+    ]
+    assert matches, package.missing
+
+
+# --- 8: filler files excluded and counted -----------------------------------
+
+
+def test_filler_files_excluded_and_counted():
+    package = _get_package()
+
+    filler_paths = {
+        "src/billing/invoice.py",
+        "src/reports/monthly.py",
+        "src/reports/weekly.py",
+        "src/utils/strings.py",
+        "src/utils/dates.py",
+        "src/notifications/email.py",
+        "src/inventory/catalog.py",
+        "config/logging.yaml",
+        "docs/style.md",
+        "tests/test_billing.py",
+    }
+    included_paths = {item.path for item in package.included}
+
+    assert filler_paths.isdisjoint(included_paths)
+    assert package.excluded_count > 0
+    assert sum(package.excluded_by_reason.values()) == package.excluded_count
+
+
+# --- 9: every included item has a non-empty reason and >=1 excerpt --------
+# The reason half already holds; the excerpt half requires bounded excerpt
+# extraction (step 6), which does not exist yet -- items carry no excerpts
+# today.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="bounded excerpt extraction not implemented until step 6; "
+    "ContextItem.excerpts is always empty today",
+)
+def test_included_items_have_reason_and_excerpt():
+    package = _get_package()
+    assert package.included, "expected at least one included item"
+
+    for item in package.included:
+        assert item.reason, f"{item.path} has no reason"
+        assert item.excerpts, f"{item.path} has no bounded excerpts"
+
+
+# --- 10: total excerpt bytes within the package budget ---------------------
+# Also requires step 6. Excerpts are always empty today, so total bytes is
+# trivially 0 -- which would trivially satisfy "within budget" without ever
+# exercising the budget. This assertion requires a *non-trivial* amount of
+# excerpt content that respects the budget, so it genuinely fails until
+# excerpt extraction exists.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="bounded excerpt extraction not implemented until step 6; "
+    "no excerpts exist yet to measure against the package byte budget",
+)
+def test_excerpt_bytes_within_package_budget():
+    package = _get_package()
+
+    total_bytes = sum(
+        len(excerpt.text.encode("utf-8"))
+        for item in package.included
+        for excerpt in item.excerpts
+    )
+
+    assert 0 < total_bytes <= MAX_PACKAGE_BYTES
