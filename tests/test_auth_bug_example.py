@@ -160,16 +160,10 @@ def test_filler_files_excluded_and_counted():
 
 
 # --- 9: every included item has a non-empty reason and >=1 excerpt --------
-# The reason half already holds; the excerpt half requires bounded excerpt
-# extraction (step 6), which does not exist yet -- items carry no excerpts
-# today.
+# Bounded excerpt extraction (step 6) is now implemented: every included
+# item carries at least one Excerpt justifying its inclusion.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="bounded excerpt extraction not implemented until step 6; "
-    "ContextItem.excerpts is always empty today",
-)
 def test_included_items_have_reason_and_excerpt():
     package = _get_package()
     assert package.included, "expected at least one included item"
@@ -180,18 +174,11 @@ def test_included_items_have_reason_and_excerpt():
 
 
 # --- 10: total excerpt bytes within the package budget ---------------------
-# Also requires step 6. Excerpts are always empty today, so total bytes is
-# trivially 0 -- which would trivially satisfy "within budget" without ever
-# exercising the budget. This assertion requires a *non-trivial* amount of
-# excerpt content that respects the budget, so it genuinely fails until
-# excerpt extraction exists.
+# Bounded excerpt extraction (step 6) is now implemented. This asserts a
+# *non-trivial* amount of excerpt content (not just "0 <= budget") that
+# still respects the package-wide byte budget.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="bounded excerpt extraction not implemented until step 6; "
-    "no excerpts exist yet to measure against the package byte budget",
-)
 def test_excerpt_bytes_within_package_budget():
     package = _get_package()
 

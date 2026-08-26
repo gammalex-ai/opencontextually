@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .context import ContextPackage
 from .discovery import discover
-from .selector import select
+from .selector import attach_excerpts, select
 
 __version__ = "0.1.0.dev0"
 
@@ -29,6 +29,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
 
     discovered, excluded_by_reason = discover(root_path)
     items, extra_exclusions = select(discovered, task)
+    excerpts_dropped_over_budget = attach_excerpts(items, discovered, task)
 
     excluded_by_reason = dict(excluded_by_reason)
     excluded_by_reason.update(extra_exclusions)
@@ -41,5 +42,8 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         missing=[],
         excluded_count=excluded_count,
         excluded_by_reason=excluded_by_reason,
-        trace={"rules_run": ["lexical_selection", "transitive_import_expansion"]},
+        trace={
+            "rules_run": ["lexical_selection", "transitive_import_expansion"],
+            "excerpts_dropped_over_budget": excerpts_dropped_over_budget,
+        },
     )

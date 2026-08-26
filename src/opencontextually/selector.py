@@ -14,7 +14,7 @@ import math
 import re
 from pathlib import PurePosixPath
 
-from .context import ContextItem
+from .context import ContextItem, Excerpt
 from .discovery import DiscoveredFile
 
 # --------------------------------------------------------------------------
@@ -43,6 +43,47 @@ MAX_DEPTH = 2
 IMPORT_DECAY = 0.5
 MAX_EXPANDED = 15
 MAX_INCLUDED = 40
+
+# --- bounded excerpt extraction + redaction (step 6) ---
+# Excerpts are the spans that justified an item's inclusion, not whole
+# files: matched symbol definitions, matched config/doc/content lines, and
+# -- for import-reached files -- the specific definitions the importing
+# file actually imported. Three bounds keep this a budget rather than a
+# second copy of the repo: a per-span line cap, a per-file excerpt-count
+# cap, and a package-wide byte cap. Overlapping/adjacent spans are merged
+# before any cap is applied. When the package-wide budget is exceeded,
+# whole excerpts are dropped lowest-item-score-first and the drop count is
+# recorded in trace["excerpts_dropped_over_budget"].
+MAX_EXCERPT_LINES = 40
+MAX_EXCERPTS_PER_FILE = 3
+MAX_PACKAGE_BYTES = 60_000
+
+# Span weights used only to rank *which* spans survive the per-file and
+# package-wide caps -- not exposed on the item itself.
+WEIGHT_IMPORTED_SYMBOL = 100.0
+WEIGHT_MATCHED_SYMBOL = 50.0
+WEIGHT_MATCHED_LINE = 1.0
+
+REDACTED = "«redacted»"
+
+# Key names that look like they hold a secret. Matched as a substring of
+# the key (case-insensitive), so "api_key", "apikey", "access_key",
+# "private_key", and "auth_token" are all covered by "key"/"token" without
+# needing to be spelled out individually. Deliberately broad: an
+# over-redacted key name is a minor annoyance, a leaked credential is not.
+_SECRET_KEY_SUBSTRINGS = ("key", "token", "secret", "password", "passwd", "credential")
+
+# `KEY = value` / `KEY: value` / `KEY=value`, case-insensitive on the key.
+_SECRET_KEY_LINE_RE = re.compile(
+    r"^(?P<prefix>\s*[A-Za-z_][A-Za-z0-9_.\-]*)(?P<sep>\s*[:=]\s*)(?P<value>.+)$"
+)
+
+# Standalone high-entropy shapes, even outside a `key: value` line.
+_ENTROPY_PATTERNS = [
+    re.compile(r"\bsk-[A-Za-z0-9_]{10,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\b[A-Za-z0-9+/_-]{32,}={0,2}\b"),
+]
 
 STOPWORDS = {
     "fix", "bug", "the", "a", "an", "in", "to", "for", "of", "and",
@@ -355,6 +396,306 @@ def expand_transitively(
         for path, (score, provenance, reason) in expanded.items()
     ]
     return items, over_cap_count
+
+
+def _looks_like_secret_key(key: str) -> bool:
+    key_lower = key.strip().lower()
+    return any(sub in key_lower for sub in _SECRET_KEY_SUBSTRINGS)
+
+
+def _redact_line(line: str) -> str:
+    """Mask the value on a secret-looking `key: value` / `key = value`
+    line, and mask any standalone high-entropy token anywhere in the line
+    (e.g. an `sk-...`/`AKIA...` key or a bare base64/hex secret that isn't
+    behind a recognizable key at all). Key names and line structure
+    survive; only the sensitive-looking value text is replaced.
+    """
+    match = _SECRET_KEY_LINE_RE.match(line)
+    if match and _looks_like_secret_key(match.group("prefix")):
+        line = line[: match.start("value")] + REDACTED + line[match.end("value") :]
+
+    for pattern in _ENTROPY_PATTERNS:
+        line = pattern.sub(REDACTED, line)
+
+    return line
+
+
+def redact_text(text: str) -> str:
+    """Apply `_redact_line` to every line of `text`, preserving line
+    count and structure. This is the only place excerpt text is allowed
+    to reach a ContextItem without going through redaction first.
+    """
+    return "\n".join(_redact_line(line) for line in text.splitlines())
+
+
+def _def_span(node: ast.AST) -> tuple[int, int]:
+    """(start_line, end_line), 1-indexed inclusive, for a def/class node,
+    capped at MAX_EXCERPT_LINES so a single huge definition cannot blow
+    the per-span budget on its own.
+    """
+    start = node.lineno
+    end = getattr(node, "end_lineno", None) or start
+    end = min(end, start + MAX_EXCERPT_LINES - 1)
+    return start, end
+
+
+def _matched_symbol_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
+    """Spans for def/class nodes whose name matches a task term -- the
+    same signal _analyze() uses to score a file, but here we need the
+    actual line range instead of just a boolean/score contribution.
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    spans = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            name_lower = node.name.lower()
+            if any(t in name_lower for t in terms):
+                spans.append(_def_span(node))
+    return spans
+
+
+def _imported_symbol_spans(content: str, names: set[str]) -> list[tuple[int, int]]:
+    """Spans for def/class nodes in `content` whose name is in `names` --
+    the definitions actually imported by another file, for import-reached
+    items. This is what makes the transitive result usable: session.py's
+    excerpt is SessionStore, not an arbitrary head-of-file slice.
+    """
+    if not names:
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    spans = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name in names:
+                spans.append(_def_span(node))
+    return spans
+
+
+def _matched_line_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
+    """One-line spans for every line containing a task term -- config key
+    lines, doc assertion lines, and a generic fallback for everything
+    else. Adjacent hits get merged into a single readable span later.
+    """
+    spans = []
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        line_lower = line.lower()
+        if any(t in line_lower for t in terms):
+            spans.append((lineno, lineno))
+    return spans
+
+
+def _merge_and_cap_spans(
+    weighted_spans: list[tuple[int, int, float]], line_count: int
+) -> list[tuple[int, int, float]]:
+    """Merge overlapping/adjacent (start, end, weight) spans, summing the
+    weight of whatever merged into each span, then cap each merged span's
+    length at MAX_EXCERPT_LINES.
+    """
+    clipped = [
+        (max(1, start), min(line_count, end), weight)
+        for start, end, weight in weighted_spans
+        if line_count > 0
+    ]
+    clipped.sort(key=lambda t: (t[0], t[1]))
+
+    merged: list[list] = []
+    for start, end, weight in clipped:
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], end)
+            merged[-1][2] += weight
+        else:
+            merged.append([start, end, weight])
+
+    capped = []
+    for start, end, weight in merged:
+        if end - start + 1 > MAX_EXCERPT_LINES:
+            end = start + MAX_EXCERPT_LINES - 1
+        capped.append((start, end, weight))
+    return capped
+
+
+def _build_excerpts(content: str, weighted_spans: list[tuple[int, int, float]]) -> list[Excerpt]:
+    """Turn weighted candidate spans into the (at most MAX_EXCERPTS_PER_FILE)
+    redacted Excerpts for one file: merge, cap span length, keep the
+    highest-weight spans up to the per-file cap, then restore reading
+    order.
+    """
+    if not weighted_spans:
+        return []
+    lines = content.splitlines()
+    merged = _merge_and_cap_spans(weighted_spans, len(lines))
+    if not merged:
+        return []
+
+    merged.sort(key=lambda t: (-t[2], t[0]))
+    kept = merged[:MAX_EXCERPTS_PER_FILE]
+    kept.sort(key=lambda t: t[0])
+
+    excerpts = []
+    for start, end, _weight in kept:
+        span_text = "\n".join(lines[start - 1 : end])
+        excerpts.append(Excerpt(start_line=start, end_line=end, text=redact_text(span_text)))
+    return excerpts
+
+
+def _imported_names_of(rel_path: str, content: str, file_index: set[str]) -> dict[str, set[str]]:
+    """Like _imports_of, but returns target path -> the specific names
+    imported from it via `from target import name[, ...]`. Plain `import
+    module` statements bring no specific names and are not represented
+    here -- they carry no excerpt-worthy symbol list.
+    """
+    try:
+        tree = ast.parse(content)
+    except (SyntaxError, ValueError):
+        return {}
+
+    module_parts, is_init = _module_parts(rel_path)
+    base_package = list(module_parts) if is_init else list(module_parts[:-1])
+
+    result: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+
+        if node.level and node.level > 0:
+            up = node.level - 1
+            if up > len(base_package):
+                continue
+            target_package = base_package[: len(base_package) - up]
+        else:
+            target_package = []
+
+        if node.module:
+            target_prefix = tuple(target_package) + tuple(node.module.split("."))
+        else:
+            target_prefix = tuple(target_package)
+
+        resolved = _resolve_module_tuple(target_prefix, file_index)
+        if not resolved or resolved == rel_path:
+            continue
+
+        names = {alias.name for alias in node.names if alias.name != "*"}
+        if names:
+            result.setdefault(resolved, set()).update(names)
+
+    return result
+
+
+def _build_import_name_graph(discovered: list[DiscoveredFile]) -> dict[str, dict[str, set[str]]]:
+    """rel path -> {target rel path -> names imported from it}, for every
+    discovered first-party Python file.
+    """
+    py_files = {f.path: f for f in discovered if f.path.endswith(".py")}
+    file_index = set(py_files)
+
+    graph: dict[str, dict[str, set[str]]] = {}
+    for path, discovered_file in py_files.items():
+        try:
+            content = discovered_file.abs_path.read_text(errors="replace")
+        except OSError:
+            content = ""
+        graph[path] = _imported_names_of(path, content, file_index) if content else {}
+    return graph
+
+
+def _importer_of(item_path: str, provenance: list[str]) -> str | None:
+    """If `item_path` was reached because some other file in `provenance`
+    imports it (i.e. this item is the *imported* file, not the importer),
+    return that other file's path. Provenance edges are recorded as
+    "<importer> imports <importee>" strings by expand_transitively().
+    """
+    for edge in reversed(provenance):
+        if " imports " not in edge:
+            continue
+        importer, _, importee = edge.partition(" imports ")
+        if importee == item_path:
+            return importer
+    return None
+
+
+def attach_excerpts(
+    items: list[ContextItem], discovered: list[DiscoveredFile], task: str
+) -> int:
+    """Populate `item.excerpts` on every item with the bounded, redacted
+    spans that justified its inclusion, then enforce the package-wide
+    MAX_PACKAGE_BYTES budget across all items, dropping the lowest-scored
+    items' excerpts first.
+
+    Returns the number of excerpts dropped for being over the package
+    budget (for trace["excerpts_dropped_over_budget"]).
+    """
+    terms = tokenize(task)
+    discovered_index = {f.path: f for f in discovered}
+    import_name_graph = _build_import_name_graph(discovered)
+
+    for item in items:
+        discovered_file = discovered_index.get(item.path)
+        if discovered_file is None:
+            continue
+        try:
+            content = discovered_file.abs_path.read_text(errors="replace")
+        except OSError:
+            content = ""
+        if not content:
+            continue
+
+        weighted_spans: list[tuple[int, int, float]] = []
+
+        if item.path.endswith(".py"):
+            importer = _importer_of(item.path, item.provenance)
+            if importer:
+                imported_names = import_name_graph.get(importer, {}).get(item.path, set())
+                for start, end in _imported_symbol_spans(content, imported_names):
+                    weighted_spans.append((start, end, WEIGHT_IMPORTED_SYMBOL))
+
+            for start, end in _matched_symbol_spans(content, terms):
+                weighted_spans.append((start, end, WEIGHT_MATCHED_SYMBOL))
+
+        for start, end in _matched_line_spans(content, terms):
+            weighted_spans.append((start, end, WEIGHT_MATCHED_LINE))
+
+        item.excerpts = _build_excerpts(content, weighted_spans)
+
+    return _enforce_package_excerpt_budget(items)
+
+
+def _enforce_package_excerpt_budget(items: list[ContextItem]) -> int:
+    """If total excerpt bytes across `items` exceeds MAX_PACKAGE_BYTES,
+    drop whole excerpts -- lowest item score first -- until it does not.
+    Returns the number of excerpts dropped.
+    """
+    entries: list[tuple[ContextItem, Excerpt, int]] = []
+    total = 0
+    for item in items:
+        for excerpt in item.excerpts:
+            size = len(excerpt.text.encode("utf-8"))
+            entries.append((item, excerpt, size))
+            total += size
+
+    if total <= MAX_PACKAGE_BYTES:
+        return 0
+
+    # Ascending by item score (lowest first); deterministic tie-break.
+    entries.sort(key=lambda entry: (entry[0].score, entry[0].path, entry[1].start_line))
+
+    to_drop_ids: set[int] = set()
+    remaining = total
+    for item, excerpt, size in entries:
+        if remaining <= MAX_PACKAGE_BYTES:
+            break
+        to_drop_ids.add(id(excerpt))
+        remaining -= size
+
+    for item in items:
+        item.excerpts = [e for e in item.excerpts if id(e) not in to_drop_ids]
+
+    return len(to_drop_ids)
 
 
 def score_file(discovered_file: DiscoveredFile, terms: list[str]) -> float:
