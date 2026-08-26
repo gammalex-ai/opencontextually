@@ -4,13 +4,14 @@ section.
 Runs `get_context("fix the authentication bug", root=examples/auth_bug)`
 against the demo fixture and checks the ten assertions listed in the plan.
 
-Assertions 1, 2, 3, 4, 5, 8 pass today. Assertion 2 (session.py included via
+Assertions 1-6, 8, 9, 10 pass today. Assertion 2 (session.py included via
 transitive import expansion, with provenance naming the middleware.py import
-edge) was un-xfailed at step 5. Assertions 6, 7, 9, 10 depend on features
-that are explicitly out of scope for this step (the two CHECK rules and
-bounded excerpt extraction) and are marked `xfail(strict=True)` so they fail
-for real today and turn into real failures -- not silent passes -- if the
-underlying feature regresses.
+edge) was un-xfailed at step 5. Assertion 6 (configuration_discrepancy,
+30 vs 60 minutes) was un-xfailed at step 8. Assertion 7 (test_reference_gap)
+depends on a CHECK rule that is explicitly out of scope for this step and
+stays marked `xfail(strict=True)` so it fails for real today and turns into
+a real failure -- not a silent pass -- if the underlying feature regresses
+or gets implemented without updating this test.
 """
 
 from __future__ import annotations
@@ -88,10 +89,6 @@ def test_auth_test_file_included():
 # ContextPackage.conflicts is always [].
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="configuration_discrepancy CHECK rule not implemented until step 8",
-)
 def test_session_timeout_discrepancy_detected():
     package = _get_package()
     assert package.conflicts, "expected a configuration_discrepancy conflict"
