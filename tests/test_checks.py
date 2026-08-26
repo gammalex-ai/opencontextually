@@ -1,4 +1,5 @@
-"""Unit tests for checks.py's configuration_discrepancy rule.
+"""Unit tests for checks.py: configuration_discrepancy and
+test_reference_gap.
 
 Negative cases get at least as much attention as the positive case -- per
 the v0.1 plan, a false positive here is worse than a miss, so the things
@@ -8,13 +9,27 @@ that must.
 
 from __future__ import annotations
 
-from opencontextually.checks import find_configuration_discrepancies
+from opencontextually.checks import find_configuration_discrepancies, find_test_reference_gaps
+from opencontextually.context import ContextItem
 from opencontextually.discovery import discover
 
 
 def _write(path, content=""):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+def _selected_items(discovered, roles=("source", "config")):
+    """Simulate SELECT having chosen every discovered file of the given
+    roles -- test_reference_gap only scans files SELECT actually chose,
+    so tests build the `items` argument this way rather than depending
+    on the real scoring/threshold logic in selector.py.
+    """
+    return [
+        ContextItem(path=f.path, role=f.role, reason="test fixture", score=1.0)
+        for f in discovered
+        if f.role in roles
+    ]
 
 
 def _discover(tmp_path):
@@ -206,3 +221,134 @@ def test_secret_looking_key_never_reported_even_if_numeric(tmp_path):
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
     assert findings == []
+
+
+# ==========================================================================
+# test_reference_gap
+# ==========================================================================
+
+
+# --- positive: a concept that IS referenced by a test produces no finding --
+
+
+def test_concept_referenced_by_test_produces_no_finding(tmp_path):
+    _write(
+        tmp_path / "src" / "auth.py",
+        "def is_session_expired(session_id):\n    return True\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_auth.py",
+        (
+            "from src.auth import is_session_expired\n\n"
+            "def test_expired_session_is_detected():\n"
+            "    assert is_session_expired('abc')\n"
+        ),
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "session expiration")
+    assert findings == []
+
+
+# --- negative: a project with no tests at all produces no findings ---------
+#
+# Naively, a testless project would make every single term a "gap" -- that
+# is not new information, it is one fact ("no tests exist") repeated once
+# per term, which is exactly the noise the v0.1 plan warns CHECK rules
+# against. So the rule stays silent when there are zero discovered test
+# files, rather than flooding `missing` with one entry per concept.
+
+
+def test_no_tests_at_all_produces_no_findings(tmp_path):
+    _write(
+        tmp_path / "src" / "auth.py",
+        "def unique_special_widget_rotation(): pass\n",
+    )
+    _write(
+        tmp_path / "config" / "app.yaml",
+        "widget:\n  rotation_interval_minutes: 5\n",
+    )
+    # deliberately no tests/ directory and no test_*.py file anywhere
+
+    discovered, _reasons = discover(tmp_path)
+    assert not any(f.role == "test" for f in discovered)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "rotate the widget")
+    assert findings == []
+
+
+# --- negative: a term appearing only in docs (not selected source/config) --
+
+
+def test_term_only_in_docs_produces_no_finding(tmp_path):
+    _write(
+        tmp_path / "docs" / "notes.md",
+        "# Widget rotation\n\nThe widget rotation feature is documented here.\n",
+    )
+    _write(
+        tmp_path / "src" / "other.py",
+        "def unrelated_helper(): pass\n",
+    )
+    # a test file must exist, otherwise the "no tests at all" rule above
+    # would mask this case rather than exercising the docs-only path
+    _write(
+        tmp_path / "tests" / "test_other.py",
+        "from src.other import unrelated_helper\n\ndef test_unrelated_helper():\n    unrelated_helper()\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)  # role=="docs" is excluded by role filter
+
+    findings = find_test_reference_gaps(items, discovered, "widget rotation")
+    assert not any("widget" in f["term"] or "rotation" in f["term"] for f in findings)
+
+
+# --- naming-convention tolerance: stemmed match, not exact substring -------
+
+
+def test_different_naming_convention_treated_as_referenced(tmp_path):
+    _write(
+        tmp_path / "src" / "session.py",
+        "def session_expiry(session_id):\n    return False\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_session.py",
+        "def test_session_expires():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "session expiry")
+
+    assert not any(f["term"] == "session expiry" for f in findings)
+
+
+# --- a genuine gap, isolated from the auth_bug fixture's other findings ----
+
+
+def test_unreferenced_concept_is_reported_with_evidence_location(tmp_path):
+    _write(
+        tmp_path / "src" / "session.py",
+        "def is_session_expired(session_id):\n    return True\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_session.py",
+        "def test_create_and_lookup():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "fix the session bug")
+
+    matches = [f for f in findings if f["rule"] == "test_reference_gap" and "expir" in f["term"]]
+    assert matches, findings
+    finding = matches[0]
+    assert finding["path"] == "src/session.py"
+    assert finding["line"] == 1
+    assert "add a test" not in finding["message"].lower()
+    assert "missing" not in finding["message"].lower()

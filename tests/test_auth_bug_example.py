@@ -4,21 +4,16 @@ section.
 Runs `get_context("fix the authentication bug", root=examples/auth_bug)`
 against the demo fixture and checks the ten assertions listed in the plan.
 
-Assertions 1-6, 8, 9, 10 pass today. Assertion 2 (session.py included via
-transitive import expansion, with provenance naming the middleware.py import
-edge) was un-xfailed at step 5. Assertion 6 (configuration_discrepancy,
-30 vs 60 minutes) was un-xfailed at step 8. Assertion 7 (test_reference_gap)
-depends on a CHECK rule that is explicitly out of scope for this step and
-stays marked `xfail(strict=True)` so it fails for real today and turns into
-a real failure -- not a silent pass -- if the underlying feature regresses
-or gets implemented without updating this test.
+All ten assertions pass. Assertion 2 (session.py included via transitive
+import expansion, with provenance naming the middleware.py import edge) was
+un-xfailed at step 5. Assertion 6 (configuration_discrepancy, 30 vs 60
+minutes) was un-xfailed at step 8. Assertion 7 (test_reference_gap) was
+un-xfailed at step 9.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from opencontextually import get_context
 
@@ -110,14 +105,12 @@ def test_session_timeout_discrepancy_detected():
 
 
 # --- 7: test_reference_gap for session expiration --------------------------
-# Requires the test_reference_gap CHECK rule (step 9). Today
-# ContextPackage.missing is always [].
+# The test_reference_gap CHECK rule (step 9) is implemented: tests/test_auth.py
+# covers login and logout but never session expiration, so session.py's
+# `is_session_expired` (and middleware.py's use of it) should surface as a
+# reference gap.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="test_reference_gap CHECK rule not implemented until step 9",
-)
 def test_session_expiration_reference_gap_detected():
     package = _get_package()
     assert package.missing, "expected a test_reference_gap entry"

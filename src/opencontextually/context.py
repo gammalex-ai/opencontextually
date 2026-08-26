@@ -74,14 +74,29 @@ class ContextPackage:
         if self.conflicts:
             lines.append("")
             lines.append(f"Conflicts ({len(self.conflicts)}):")
-            for conflict in self.conflicts:
-                lines.append(f"  {conflict}")
+            for idx, conflict in enumerate(self.conflicts, start=1):
+                lines.append(f"  {idx}. {conflict.get('setting', conflict.get('rule', 'conflict'))}")
+                message = conflict.get("message")
+                if message:
+                    lines.append(f"     {message}")
+                else:
+                    doc = conflict.get("doc") or {}
+                    config = conflict.get("config") or {}
+                    if doc:
+                        lines.append(f"     {doc.get('path')}:{doc.get('line')} says {doc.get('value')}")
+                    if config:
+                        lines.append(f"     {config.get('path')}:{config.get('line')} sets {config.get('value')}")
 
         if self.missing:
             lines.append("")
             lines.append(f"Missing ({len(self.missing)}):")
-            for item in self.missing:
-                lines.append(f"  {item}")
+            for idx, entry in enumerate(self.missing, start=1):
+                message = entry.get("message") or f"no test references {entry.get('term', '')}"
+                message = message[:1].upper() + message[1:] if message else message
+                lines.append(f"  {idx}. {message}")
+                path = entry.get("path")
+                if path:
+                    lines.append(f"     referenced in {path}:{entry.get('line')}")
 
         lines.append("")
         if self.excluded_count:

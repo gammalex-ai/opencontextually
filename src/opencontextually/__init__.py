@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .checks import find_configuration_discrepancies
+from .checks import find_configuration_discrepancies, find_test_reference_gaps
 from .context import ContextPackage
 from .discovery import discover
 from .selector import attach_excerpts, select
@@ -41,6 +41,15 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # so the render() footer accurately reports which checks ran.
     conflicts = find_configuration_discrepancies(discovered)
 
+    # CHECK: test_reference_gap. Lexical, high-precision/low-recall -- see
+    # checks.py. Runs only over the files SELECT actually chose for this
+    # task (`items`), because "no test references X" is only meaningful
+    # relative to what this task pulled in, not the whole repo. Always
+    # recorded in trace["rules_run"] once it runs, whether or not it
+    # finds anything, so the render() footer accurately reports which
+    # checks ran.
+    missing = find_test_reference_gaps(items, discovered, task)
+
     # An item whose excerpts were all evicted by the package-wide budget
     # is no longer a usable inclusion -- it has a reason but nothing to
     # back it -- so it moves from `included` to the "over_budget"
@@ -61,7 +70,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         task=task,
         included=items,
         conflicts=conflicts,
-        missing=[],
+        missing=missing,
         excluded_count=excluded_count,
         excluded_by_reason=excluded_by_reason,
         trace={
@@ -69,6 +78,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
                 "lexical_selection",
                 "transitive_import_expansion",
                 "configuration_discrepancy",
+                "test_reference_gap",
             ],
             "excerpts_dropped_over_budget": excerpts_dropped_over_budget,
         },
