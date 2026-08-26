@@ -42,9 +42,35 @@ WEIGHT_SYMBOL = 6.0
 CONTENT_CAP = 6.0
 CONTENT_MULT = 2.0
 ROLE_BONUS = 2.0
-ROLE_BONUS_ROLES = {"config", "docs", "test"}
+# "test" deliberately excluded -- see TEST_SIGNAL_DAMPING below. A term-
+# matching test file no longer gets a flat bonus on top of its (already
+# repetition-heavy) symbol/content signal; config and docs, which do not
+# have this repetition problem, are unaffected.
+ROLE_BONUS_ROLES = {"config", "docs"}
 
 MIN_TOKEN_LEN = 3
+
+# --- bug fix: test files systematically outrank the source they test ---
+# A test file's `def test_<scenario>` names are, by construction, written
+# in task vocabulary -- a handful of source functions implement a feature,
+# but dozens of test cases each *describe* it in a slightly different way
+# ("test_redirect_with_cookie", "test_session_cookie_persists", ...). That
+# repetition is real, but it is repetition of description, not evidence of
+# implementation centrality the way a source file's own symbol/content
+# matches are. Left undamped, symbol_score alone (uncapped, WEIGHT_SYMBOL
+# per matching def) routinely reaches the hundreds for a large test module
+# while the source file that actually implements the fix scores in the
+# tens -- observed on psf/requests: tests/test_requests.py scored 405.2
+# (396 of it from 66 term-matching test-method defs) against
+# src/requests/sessions.py's 55.5, even though sessions.py is where a
+# session-cookie-redirect fix would actually be made. TEST_SIGNAL_DAMPING
+# scales down symbol_score and content_score -- the two components that
+# scale with how many times a file *mentions* a term -- for test-role
+# files only. filename_score is left untouched: a test file's own name
+# (e.g. test_sessions.py) is a deliberate, non-repeated signal, not a
+# repetition artifact, and remains a legitimate (if now typically
+# insufficient on its own) reason to include it.
+TEST_SIGNAL_DAMPING = 0.1
 
 # --- real-repo tuning (step 11) ---
 # Observed on a data-heavy real repo (~/Dali): a 700KB benchmark-results
@@ -491,6 +517,14 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
     # (rarer, more deliberate signals) are unaffected by file size.
     if discovered_file.size > LARGE_FILE_BYTES:
         content_score *= LARGE_FILE_CONTENT_PENALTY
+
+    # Test files describe a feature many times over, once per test case --
+    # see TEST_SIGNAL_DAMPING above. Damp symbol and content score (the
+    # repetition-sensitive components) for test-role files only; a
+    # filename match is left at full weight.
+    if discovered_file.role == "test":
+        symbol_score *= TEST_SIGNAL_DAMPING
+        content_score *= TEST_SIGNAL_DAMPING
 
     # --- role bonus ---
     if matched_any and discovered_file.role in ROLE_BONUS_ROLES:

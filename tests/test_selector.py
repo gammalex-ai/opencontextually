@@ -184,6 +184,89 @@ def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
     )
 
 
+# --- bug fix: test files systematically outrank the source they test ------
+#
+# Observed against a fresh clone of psf/requests with the task "fix
+# redirect handling when a session cookie is set": tests/test_requests.py
+# scored 405.2 (dominated by dozens of `def test_<scenario>` names that
+# each match multiple task terms) against src/requests/sessions.py's 55.5
+# -- the file a developer would actually open. See TEST_SIGNAL_DAMPING in
+# selector.py.
+
+
+def test_source_outranks_test_file_that_mentions_terms_more_often(tmp_path):
+    # The test file mentions "session" and "cookie" far more densely than
+    # the source file -- many small test cases, each describing the
+    # feature in task vocabulary -- exactly the shape that used to win on
+    # raw content/symbol frequency alone.
+    _write(
+        tmp_path / "src" / "sessions.py",
+        "class SessionRedirectMixin:\n"
+        "    '''Handles redirect while carrying the session cookie.'''\n"
+        "    def resolve_redirects(self):\n"
+        "        '''Resolve redirects, preserving the session cookie.'''\n"
+        "        pass\n",
+    )
+    test_defs = "\n".join(
+        f"def test_session_cookie_redirect_case_{i}():\n    pass\n" for i in range(6)
+    )
+    _write(tmp_path / "tests" / "test_sessions.py", test_defs)
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra = select(discovered, "fix redirect handling when a session cookie is set")
+
+    paths_in_order = [item.path for item in items]
+    assert "src/sessions.py" in paths_in_order
+    assert "tests/test_sessions.py" in paths_in_order
+    assert paths_in_order.index("src/sessions.py") < paths_in_order.index(
+        "tests/test_sessions.py"
+    )
+
+
+def test_test_file_still_included_not_dropped(tmp_path):
+    # Damping must lower a test file's rank, not remove it from the
+    # package -- tests are legitimate, useful context.
+    _write(
+        tmp_path / "src" / "sessions.py",
+        "class SessionRedirectMixin:\n    pass\n",
+    )
+    test_defs = "\n".join(
+        f"def test_session_cookie_redirect_case_{i}():\n    pass\n" for i in range(6)
+    )
+    _write(tmp_path / "tests" / "test_sessions.py", test_defs)
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra = select(discovered, "fix redirect handling when a session cookie is set")
+
+    paths_in_order = [item.path for item in items]
+    assert "tests/test_sessions.py" in paths_in_order
+
+
+def test_auth_bug_demo_ordering_survives_test_damping(tmp_path):
+    # The flagship demo's ordering must not regress: middleware.py first,
+    # session.py surfaced via the import edge, and test_auth.py still
+    # included even though it now scores lower relative to source.
+    from opencontextually import get_context
+
+    package = get_context("fix the authentication bug", root="examples/auth_bug")
+    paths_in_order = [item.path for item in package.included]
+
+    assert "src/auth/middleware.py" in paths_in_order
+    assert "src/users/session.py" in paths_in_order
+    assert "tests/test_auth.py" in paths_in_order
+
+    session_item = next(i for i in package.included if i.path == "src/users/session.py")
+    assert any(
+        "middleware.py imports src/users/session.py" in edge for edge in session_item.provenance
+    )
+
+    conflict_settings = " ".join(c.get("setting", "") for c in package.conflicts)
+    assert "timeout_minutes" in conflict_settings
+
+    missing_messages = " ".join(m.get("message", "") for m in package.missing)
+    assert "session expired" in missing_messages.lower()
+
+
 def test_cli_exits_2_on_bad_root(tmp_path):
     bad_root = tmp_path / "does_not_exist"
     result = subprocess.run(
