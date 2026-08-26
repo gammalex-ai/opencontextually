@@ -7,6 +7,7 @@ ContextPackage.render() -- the only rendering path in the codebase.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -27,6 +28,11 @@ def main(argv: list[str] | None = None) -> int:
         default=".",
         help="project root to search (default: current directory)",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the ContextPackage as JSON (package.to_dict()) instead of plain text",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -38,7 +44,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     package = get_context(args.task, root=root)
-    print(package.render())
+    if args.json:
+        print(json.dumps(package.to_dict(), indent=2))
+    else:
+        print(package.render())
     return 0
 
 
