@@ -22,7 +22,19 @@ from .discovery import DATA_DIR_SEGMENTS, DiscoveredFile
 # lives in this block so it can be adjusted in one place.
 # --------------------------------------------------------------------------
 
-SCORE_THRESHOLD = 0.0
+# --- bug fix: threshold too permissive ---
+# Below this bar, a bare score > 0.0 admitted a single incidental content
+# mention (e.g. "user experience" in a marketing bio, matched only once,
+# with no filename/symbol signal and no role bonus) as if it were a real
+# result. Observed on a real Next.js/TypeScript repo with no login/session
+# code at all: such incidental mentions scored ~1.4, while every genuine
+# signal in the auth_bug fixture (filename hit, symbol hit, or a single
+# config/doc/test mention plus its ROLE_BONUS) scores comfortably above 2.0.
+# Raising the threshold to 2.0 means a bare, role-bonus-less, single
+# content mention no longer clears the bar on its own -- consistent with
+# the plan's "no relevant context found" being a correct, valuable answer
+# rather than something to avoid.
+SCORE_THRESHOLD = 2.0
 MAX_SEEDS = 12
 
 WEIGHT_FILENAME = 10.0
@@ -92,6 +104,38 @@ MAX_INCLUDED = 18
 MAX_EXCERPT_LINES = 40
 MAX_EXCERPTS_PER_FILE = 3
 MAX_PACKAGE_BYTES = 60_000
+
+# --- bug fix: excerpt bounds are line-based only ---
+# MAX_EXCERPT_LINES does nothing against a minified file that is a single
+# multi-thousand-character line: one "line" can still blow the whole
+# package byte budget by itself. MAX_EXCERPT_CHARS caps a single excerpt's
+# *text* length directly, independent of how many lines it spans, and is
+# comfortably below MAX_PACKAGE_BYTES so no one excerpt can ever exhaust
+# the package budget on its own. Over-long text is truncated with a clear
+# trailing marker rather than silently cut off mid-content.
+MAX_EXCERPT_CHARS = 2_000
+TRUNCATION_MARKER = " …[truncated]"
+
+# --- bug fix: minified/generated assets scanned as prose ---
+# Content-frequency matching over a minified/generated asset produces
+# coincidental "hits" that have nothing to do with the task -- e.g. the SVG
+# keyword `userSpaceOnUse` containing "user" as a raw substring. Path and
+# filename matching still applies (a file literally named after a task
+# term is still relevant); only the content-frequency scoring component
+# and fallback content excerpting are skipped for files classified as an
+# asset. Kept as a small, comprehensible rule set rather than an
+# exhaustive list, per the plan.
+ASSET_EXTENSIONS = {".svg", ".map"}
+ASSET_FILENAME_SUFFIXES = (".min.js", ".min.css")
+ASSET_LOCKFILE_NAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "composer.lock",
+    "gemfile.lock", "cargo.lock", "poetry.lock", "pipfile.lock",
+}
+ASSET_DIR_SEGMENTS = {"public", "dist", "build", "vendor"}
+# A very high average line length is a strong minification signal --
+# hand-written prose and source rarely average anywhere near this many
+# characters per line, while minified/bundled output routinely does.
+ASSET_AVG_LINE_LENGTH = 500
 
 # Span weights used only to rank *which* spans survive the per-file and
 # package-wide caps -- not exposed on the item itself.
@@ -211,18 +255,124 @@ def tokenize(task: str) -> list[str]:
 
 
 def _path_segments(path: str) -> list[str]:
-    """Lowercased path segments, including the filename stem split off
-    from its extension, for filename/path-segment matching.
+    """Path segments (original case preserved -- see _iter_word_matches,
+    which needs case to tell a camelCase hump from a bare substring),
+    including the filename stem split off from its extension, for
+    filename/path-segment matching.
     """
-    lower = path.lower()
-    parts = re.split(r"[\\/]", lower)
+    parts = re.split(r"[\\/]", path)
     segments: list[str] = []
     for part in parts:
         segments.append(part)
-        stem = re.sub(r"\.[a-z0-9]+$", "", part)
+        stem = re.sub(r"\.[A-Za-z0-9]+$", "", part)
         if stem and stem != part:
             segments.append(stem)
     return segments
+
+
+# --------------------------------------------------------------------------
+# Bug fix: word-boundary term matching.
+#
+# Plain substring matching (`term in haystack`) matched "user" inside
+# "userSpaceOnUse" (an SVG coordinate-system keyword) and let a single
+# incidental "user experience" mention in prose outrank a genuinely
+# relevant file. This is bounded matching instead: a term is a real word
+# match only when it sits at a real boundary on *both* sides -- either a
+# non-identifier character (matching the non-alnum split tokenize() already
+# uses for the task side), or a camelCase hump (the same lower-followed-by-
+# upper transition _split_camel_and_snake() inserts a space at).
+#
+# The camelCase side is deliberately one-directional: a hump is only
+# accepted as a boundary when the matched text itself starts with an
+# uppercase letter (i.e. the match is a properly-capitalized word segment,
+# as in "getUser" or "UserSession"). A lowercase term sitting at the front
+# of a longer lowerCamelCase identifier with no real delimiter --
+# "userSpaceOnUse" is "user" + "Space" + "On" + "Use" by the same splitting
+# rule -- does NOT get a free pass just because a capital happens to follow
+# it; that leading lowercase run is exactly the ambiguous, false-positive-
+# prone shape this fix targets. "user_id" and "UserSession" still match
+# because they have (respectively) an explicit delimiter and a
+# capitalized, hump-bounded match.
+# --------------------------------------------------------------------------
+
+
+def _iter_word_matches(text: str, term: str):
+    """Yield the start indices in `text` where `term` occurs as a genuine
+    word -- respecting identifier boundaries (camelCase humps and
+    snake_case/other delimiters) rather than as an arbitrary substring.
+    Matching is case-insensitive; boundary decisions use the original
+    (unlowered) text so a camelCase hump can be detected.
+    """
+    if not term:
+        return
+    text_lower = text.lower()
+    term_lower = term.lower()
+    tlen = len(term_lower)
+    n = len(text)
+    pos = 0
+    while True:
+        idx = text_lower.find(term_lower, pos)
+        if idx == -1:
+            return
+        pos = idx + 1
+        end = idx + tlen
+        matched_is_upper_start = text[idx].isupper()
+        before = text[idx - 1] if idx > 0 else ""
+        after = text[end] if end < n else ""
+
+        left_ok = (
+            idx == 0
+            or not before.isalnum()
+            or ((before.islower() or before.isdigit()) and matched_is_upper_start)
+        )
+        if not left_ok:
+            continue
+
+        right_ok = end == n or not after.isalnum()
+        if not right_ok and matched_is_upper_start and after.isupper():
+            right_ok = True
+
+        if right_ok:
+            yield idx
+
+
+def has_word_match(text: str, term: str) -> bool:
+    """True if `term` occurs anywhere in `text` as a genuine word."""
+    for _ in _iter_word_matches(text, term):
+        return True
+    return False
+
+
+def count_word_matches(text: str, term: str) -> int:
+    """Count of genuine word occurrences of `term` in `text`."""
+    return sum(1 for _ in _iter_word_matches(text, term))
+
+
+def _is_asset_like(path: str, content: str) -> bool:
+    """True when `path`/`content` looks like a minified, generated, or
+    vendored asset rather than hand-written prose or source -- see the
+    ASSET_* tunables above. Used only to disable content-frequency
+    matching and the generic content-line excerpt fallback; path/filename
+    matching is unaffected.
+    """
+    name = PurePosixPath(path).name
+    lower_name = name.lower()
+    if lower_name in ASSET_LOCKFILE_NAMES:
+        return True
+    ext = PurePosixPath(lower_name).suffix
+    if ext in ASSET_EXTENSIONS:
+        return True
+    if lower_name.endswith(ASSET_FILENAME_SUFFIXES):
+        return True
+    dir_parts = path.lower().split("/")[:-1]
+    if any(part in ASSET_DIR_SEGMENTS for part in dir_parts):
+        return True
+    if content:
+        lines = content.splitlines() or [content]
+        avg_len = sum(len(line) for line in lines) / len(lines)
+        if avg_len > ASSET_AVG_LINE_LENGTH:
+            return True
+    return False
 
 
 def _build_reason(
@@ -287,7 +437,7 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
 
     # --- filename / path segment match: highest-weight signal ---
     segments = _path_segments(discovered_file.path)
-    filename_terms = [t for t in terms if any(t in seg for seg in segments)]
+    filename_terms = [t for t in terms if any(has_word_match(seg, t) for seg in segments)]
     if filename_terms:
         filename_score += WEIGHT_FILENAME * len(filename_terms)
         matched_any = True
@@ -297,6 +447,8 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
         content = discovered_file.abs_path.read_text(errors="replace")
     except OSError:
         content = ""
+
+    is_asset = _is_asset_like(discovered_file.path, content)
 
     # --- Python symbol definitions ---
     symbol_names: list[str] = []
@@ -309,10 +461,9 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
         if tree is not None:
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    name_lower = node.name.lower()
                     node_matched = False
                     for t in terms:
-                        if t in name_lower:
+                        if has_word_match(node.name, t):
                             symbol_score += WEIGHT_SYMBOL
                             matched_any = True
                             node_matched = True
@@ -320,11 +471,15 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
                         symbol_names.append(node.name)
 
     # --- damped content term frequency ---
+    # Skipped for minified/generated/vendored assets (is_asset): a bare
+    # word-boundary match there is still not a meaningful "mention" -- the
+    # content is not prose or source a developer would read, and a single
+    # multi-thousand-character line can otherwise dominate scoring on
+    # coincidence alone.
     content_term_counts: dict[str, int] = {}
-    if content:
-        content_lower = content.lower()
+    if content and not is_asset:
         for t in terms:
-            count = content_lower.count(t)
+            count = count_word_matches(content, t)
             if count > 0:
                 content_score += min(CONTENT_CAP, CONTENT_MULT * math.log(1 + count))
                 matched_any = True
@@ -614,8 +769,7 @@ def _matched_symbol_spans(content: str, terms: list[str]) -> list[tuple[int, int
     spans = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            name_lower = node.name.lower()
-            if any(t in name_lower for t in terms):
+            if any(has_word_match(node.name, t) for t in terms):
                 spans.append(_def_span(node))
     return spans
 
@@ -649,8 +803,7 @@ def _matched_line_spans(content: str, terms: list[str]) -> list[tuple[int, int]]
     """
     spans = []
     for lineno, line in enumerate(content.splitlines(), start=1):
-        line_lower = line.lower()
-        if any(t in line_lower for t in terms):
+        if any(has_word_match(line, t) for t in terms):
             spans.append((lineno, lineno))
     return spans
 
@@ -672,7 +825,7 @@ def _config_key_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
             continue
         if not _CONFIG_KEY_LINE_RE.match(stripped):
             continue
-        if any(t in line.lower() for t in terms):
+        if any(has_word_match(line, t) for t in terms):
             spans.append((lineno, lineno))
     return spans
 
@@ -690,7 +843,7 @@ def _doc_heading_and_assertion_spans(content: str, terms: list[str]) -> list[tup
     for lineno, line in enumerate(content.splitlines(), start=1):
         stripped = line.lstrip()
         if stripped.startswith("#"):
-            if any(t in line.lower() for t in terms):
+            if any(has_word_match(line, t) for t in terms):
                 spans.append((lineno, lineno))
                 under_matching_heading = True
             else:
@@ -751,8 +904,21 @@ def _build_excerpts(content: str, weighted_spans: list[tuple[int, int, float]]) 
     excerpts = []
     for start, end, _weight in kept:
         span_text = "\n".join(lines[start - 1 : end])
+        span_text = _truncate_chars(span_text)
         excerpts.append(Excerpt(start_line=start, end_line=end, text=redact_text(span_text)))
     return excerpts
+
+
+def _truncate_chars(text: str) -> str:
+    """Cap `text` at MAX_EXCERPT_CHARS, appending TRUNCATION_MARKER when
+    truncation happened. This is what MAX_EXCERPT_LINES cannot provide on
+    its own: a single very long line (e.g. one 4,000-character minified
+    line) is still bounded, because the cap is on character count, not
+    line count.
+    """
+    if len(text) <= MAX_EXCERPT_CHARS:
+        return text
+    return text[:MAX_EXCERPT_CHARS].rstrip() + TRUNCATION_MARKER
 
 
 def _imported_names_of(rel_path: str, content: str, file_index: set[str]) -> dict[str, set[str]]:
@@ -886,6 +1052,15 @@ def attach_excerpts(
 
         if structural_spans:
             weighted_spans = structural_spans
+        elif _is_asset_like(discovered_file.path, content):
+            # No structural spans (no imported/matched symbol, config key,
+            # or doc heading) and the file itself is a minified/generated
+            # asset -- the generic content-line fallback would otherwise
+            # dump an arbitrary slice of a minified line as if it were
+            # prose worth reading. Such an item (reached only via a
+            # filename/path match) gets no excerpt rather than a
+            # meaningless one.
+            weighted_spans = []
         else:
             weighted_spans = [
                 (start, end, WEIGHT_MATCHED_LINE)

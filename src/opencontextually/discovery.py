@@ -94,6 +94,14 @@ def _classify_role(rel_path: str) -> str:
     parts = rel_path.split("/")
     name = parts[-1]
     ext = Path(name).suffix.lower()
+    if not ext and name.lower() in CONFIG_EXTENSIONS:
+        # A dotfile whose entire name is the "extension" (".env", the
+        # canonical case) has no suffix by pathlib's definition -- Path
+        # treats a leading-dot-only name as having no extension at all --
+        # even though ".env" is already listed in CONFIG_EXTENSIONS. Fall
+        # back to the whole lowered filename so these are still recognized
+        # as config rather than silently landing in "other".
+        ext = name.lower()
     dir_parts = parts[:-1]
 
     if "tests" in dir_parts or name.startswith("test_") or name.endswith("_test.py"):
