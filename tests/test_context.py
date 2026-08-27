@@ -7,7 +7,7 @@ def test_render_and_to_dict_roundtrip():
         role="source",
         reason="imported by middleware.py",
         score=0.82,
-        provenance=["src/auth/middleware.py", "src/auth/session.py"],
+        provenance=["src/auth/middleware.py imports src/auth/session.py"],
         excerpts=[Excerpt(start_line=10, end_line=14, text="def expire():\n    pass")],
     )
     package = ContextPackage(
@@ -23,23 +23,15 @@ def test_render_and_to_dict_roundtrip():
     rendered = package.render()
     assert "fix the authentication bug" in rendered
     assert "src/auth/session.py" in rendered
-    # The compact default shows a "via" marker for import-reached items,
-    # naming the edge path -- truncated to fit the terminal width if
-    # needed, so check for the marker and the importer rather than the
-    # full (possibly truncated) chain text.
+    # The compact default shows a "via" marker for import-reached items --
+    # naming the neighboring file once, by its own basename, rather than
+    # restating the full provenance edge (which duplicates `reason` and
+    # can run well past a normal terminal's width -- see test_via_marker.py
+    # for the truncation case). The full edge sentence must NOT appear
+    # verbatim in the rendered line.
     assert "via" in rendered
-    assert "src/auth/middleware.py" in rendered
-
-    # A wide enough terminal shows the full edge chain untruncated.
-    import shutil as _shutil
-
-    original_get_terminal_size = _shutil.get_terminal_size
-    _shutil.get_terminal_size = lambda fallback=(80, 24): _shutil.os.terminal_size((200, 24))
-    try:
-        wide_rendered = package.render()
-    finally:
-        _shutil.get_terminal_size = original_get_terminal_size
-    assert "src/auth/middleware.py -> src/auth/session.py" in wide_rendered
+    assert "middleware.py" in rendered
+    assert "src/auth/middleware.py imports src/auth/session.py" not in rendered
 
     verbose_rendered = package.render(verbose=True)
     assert "def expire():" in verbose_rendered
@@ -48,8 +40,7 @@ def test_render_and_to_dict_roundtrip():
     assert as_dict["task"] == "fix the authentication bug"
     assert as_dict["included"][0]["path"] == "src/auth/session.py"
     assert as_dict["included"][0]["provenance"] == [
-        "src/auth/middleware.py",
-        "src/auth/session.py",
+        "src/auth/middleware.py imports src/auth/session.py",
     ]
     assert as_dict["excluded_by_reason"] == {"ignored": 2, "binary": 1}
 

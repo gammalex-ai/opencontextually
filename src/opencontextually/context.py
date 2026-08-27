@@ -23,6 +23,7 @@ from __future__ import annotations
 import shutil
 import sys
 from dataclasses import dataclass, field, asdict
+from pathlib import PurePosixPath
 
 # How many included items the compact default shows before summarizing the
 # rest as "+N more". Chosen so the common case (a handful of genuinely
@@ -143,8 +144,9 @@ class ContextPackage:
     def _render_item_line(self, item: ContextItem, path_width: int, term_width: int, glyphs) -> str:
         path_field = item.path.ljust(path_width)
         detail = item.reason
-        if item.provenance:
-            detail += f"  {glyphs.VIA} via {' -> '.join(item.provenance)}"
+        via = _via_marker(item)
+        if via:
+            detail += f"  {glyphs.VIA} via {via}"
 
         prefix = f"  {path_field}  "
         budget = max(term_width - len(prefix), 16)
@@ -298,6 +300,38 @@ class _AsciiGlyphs:
     GAP = "o"
     VIA = "<-"
     DOT = "*"
+
+
+# --- bug fix: redundant, truncated "via" text ---
+# The compact line used to reuse the item's full provenance -- the entire
+# ordered edge-path list, joined with " -> " -- as the "via" marker. For a
+# one-hop item that is already the whole reason restated in a different
+# shape ("dali/runners/run_synthetic.py imports dali/scoring/verification.py"
+# duplicating a `reason` that already says something like "imported by
+# run_synthetic.py"), and for a deeper chain it routinely blew past a
+# standard 80-100 column terminal and got cut off mid-path by _truncate().
+# Neither problem is what the marker is for -- it exists so a reader can
+# tell *at a glance* which nearby file pulled this one in, not to restate
+# the whole path selector.py already used to build the reason.
+#
+# The fix names the neighboring file once, concisely, by basename: the
+# last edge in provenance (the hop that reached this item directly) is
+# selector.py's "<importer> imports <importee>" sentence; whichever side
+# is *not* this item's own path is the file to name. Structured
+# provenance itself -- what to_dict()/--json emit -- is completely
+# untouched by this; only what render() prints from it changes.
+def _via_marker(item: ContextItem) -> str | None:
+    if not item.provenance:
+        return None
+    edge = item.provenance[-1]
+    if " imports " not in edge:
+        # Not one of selector.py's import-edge sentences (e.g. some future
+        # provenance shape) -- nothing safe to shorten, so show nothing
+        # rather than guess.
+        return None
+    left, _, right = edge.partition(" imports ")
+    other_path = right if left == item.path else left
+    return PurePosixPath(other_path).name
 
 
 def _truncate(text: str, width: int) -> str:
