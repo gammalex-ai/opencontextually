@@ -258,6 +258,46 @@ ASSET_DIR_SEGMENTS = {"public", "dist", "build", "vendor"}
 # characters per line, while minified/bundled output routinely does.
 ASSET_AVG_LINE_LENGTH = 500
 
+# --- bug fix: framework filename conventions dominate ranking ---
+# WEIGHT_FILENAME rewards a term matching any path segment (directory name,
+# filename, or filename stem) at full, flat weight regardless of how many
+# other files in the *same repo* share that word. That is right for a
+# distinctive name (`navigation.ts`, the only file in the repo with that
+# word anywhere in its path) and wrong for a framework convention
+# (`page.tsx`, one of 14 identically-named route files in a Next.js App
+# Router repo): matching "page" carries almost no information about which
+# page, yet scored exactly as high as matching a name that appears once.
+# Observed on a real Next.js/TypeScript repo: every one of the top 8
+# results for "improve landing page conversion rate" was a different
+# page.tsx, each included solely because its path contains "page".
+#
+# FILENAME_TERM_RARITY_WEIGHT scales a matched filename term by how rare
+# that specific *word* is across every discovered file's path segments in
+# this run -- not a hardcoded list of conventions (page.tsx, index.js,
+# __init__.py, route.ts, layout.tsx, mod.rs, ...), which could never cover
+# every framework's convention and would not adapt to an unknown one. The
+# rarity map is built once per run from whatever the repo actually
+# contains (see compute_filename_word_counts()), so it naturally derates
+# "page" in a Next.js repo, "mod" in a Rust repo, or any other convention
+# neither of us anticipated, while leaving a name that happens to be used
+# once completely untouched.
+#
+# Falloff is 1 / (1 + log(count)) -- smooth and logarithmic rather than a
+# hard cutoff, so a word appearing twice (0.59) is not treated anywhere
+# near as harshly as one appearing fifty times (0.20), per the plan's
+# preference for graduated damping over cliffs. count == 1 (a name unique
+# in the repo) always yields exactly 1.0 -- full, unchanged weight -- which
+# is what keeps `lib/navigation.ts` (exactly one `navigation.ts` in the
+# Next.js fixture repo) ranking #1 for "navigation dropdown is broken on
+# mobile" exactly as it did before this fix.
+#
+# Applied per matched *term*, not per whole file or whole basename: a file
+# `user_page.tsx` in a repo full of `page.tsx` still gets full weight for
+# matching "user" (a word unique to that one file) even though "page" -- a
+# different word that also happens to match -- is damped to near zero. A
+# whole-basename comparison would miss this, since "user_page.tsx" as a
+# complete filename is itself unique; rarity has to be judged word by word,
+# the same granularity filename_terms are already computed at.
 # Span weights used only to rank *which* spans survive the per-file and
 # package-wide caps -- not exposed on the item itself.
 #
@@ -516,6 +556,57 @@ def _is_asset_like(path: str, content: str) -> bool:
     return False
 
 
+def _segment_words(segment: str) -> set[str]:
+    """The distinct lowercased words inside one path segment, split the
+    same way tokenize() splits task text (camelCase/snake_case boundaries,
+    then non-alphanumeric runs) -- so a word extracted here lines up
+    exactly with the terms filename matching already compares against.
+    Unlike tokenize(), stopwords and short tokens are kept: a task term is
+    never a stopword or under MIN_TOKEN_LEN to begin with (tokenize()
+    already filtered those out before matching ever happens), so there is
+    nothing to gain by filtering the rarity map's keys the same way, and
+    doing so would only risk silently dropping a legitimate lookup.
+    """
+    text = _split_camel_and_snake(segment).lower()
+    return {w for w in re.split(r"[^a-z0-9]+", text) if w}
+
+
+def compute_filename_word_counts(discovered: list[DiscoveredFile]) -> dict[str, int]:
+    """word -> number of distinct discovered files whose path contains
+    that word in any path segment (directory name, filename, or filename
+    stem -- the exact same universe _path_segments() draws filename_terms
+    from). This is the rarity map behind the fix above: cheap to build (one
+    pass over paths already in memory from discover(), no extra file
+    reads), and derived entirely from the repo being scanned rather than
+    any hardcoded list of framework conventions.
+    """
+    counts: dict[str, int] = {}
+    for discovered_file in discovered:
+        words: set[str] = set()
+        for segment in _path_segments(discovered_file.path):
+            words |= _segment_words(segment)
+        for word in words:
+            counts[word] = counts.get(word, 0) + 1
+    return counts
+
+
+def _filename_term_weight(term: str, word_counts: dict[str, int] | None) -> float:
+    """Rarity weight for one matched filename term -- see the
+    FILENAME_TERM_RARITY comment block above WEIGHT_IMPORTED_SYMBOL.
+    `word_counts` is None for standalone callers (e.g. tests calling
+    score_file() directly on a single file with no repo-wide view); that
+    is treated the same as "this word is unique," i.e. full weight,
+    which is also exactly the pre-fix behavior such callers already
+    expect.
+    """
+    if not word_counts:
+        return 1.0
+    count = word_counts.get(term.lower(), 1)
+    if count <= 1:
+        return 1.0
+    return 1.0 / (1.0 + math.log(count))
+
+
 def _build_reason(
     role: str,
     filename_terms: list[str],
@@ -579,7 +670,10 @@ def _in_example_path(path: str) -> bool:
 
 
 def _analyze(
-    discovered_file: DiscoveredFile, terms: list[str], cache: RunCache | None = None
+    discovered_file: DiscoveredFile,
+    terms: list[str],
+    cache: RunCache | None = None,
+    filename_word_counts: dict[str, int] | None = None,
 ) -> tuple[float, str]:
     """Score a single discovered file against `terms`, returning
     (score, reason).
@@ -589,6 +683,13 @@ def _analyze(
     extraction do not each independently read and parse the same file --
     see filecache.RunCache. Optional (defaults to a throwaway per-call
     cache) so this stays callable standalone, e.g. from tests.
+
+    `filename_word_counts` (see compute_filename_word_counts()), when
+    given, is the whole run's basename-rarity map, used to damp a filename
+    match that is a repo-wide naming convention rather than a distinctive
+    name -- see the comment block above WEIGHT_IMPORTED_SYMBOL. Optional
+    for the same standalone-caller reason as `cache`; a missing map is
+    treated as "every matched word is unique," i.e. no damping.
     """
     cache = cache if cache is not None else RunCache()
     filename_score = 0.0
@@ -601,7 +702,9 @@ def _analyze(
     segments = _path_segments(discovered_file.path)
     filename_terms = [t for t in terms if any(has_word_match(seg, t) for seg in segments)]
     if filename_terms:
-        filename_score += WEIGHT_FILENAME * len(filename_terms)
+        filename_score += WEIGHT_FILENAME * sum(
+            _filename_term_weight(t, filename_word_counts) for t in filename_terms
+        )
         matched_any = True
 
     content = cache.get_content(discovered_file)
@@ -1484,11 +1587,18 @@ def _enforce_package_excerpt_budget(items: list[ContextItem]) -> int:
     return len(to_drop_ids)
 
 
-def score_file(discovered_file: DiscoveredFile, terms: list[str]) -> float:
+def score_file(
+    discovered_file: DiscoveredFile,
+    terms: list[str],
+    filename_word_counts: dict[str, int] | None = None,
+) -> float:
     """Score `discovered_file` against `terms`. See module docstring for
-    the weighting scheme.
+    the weighting scheme. `filename_word_counts` is optional -- see
+    _analyze()'s docstring; omitting it scores as if every filename word
+    matched were unique to the repo (the pre-rarity-fix behavior), which
+    is what existing single-file callers, including tests, already expect.
     """
-    score, _reasons = _analyze(discovered_file, terms)
+    score, _reasons = _analyze(discovered_file, terms, filename_word_counts=filename_word_counts)
     return score
 
 
@@ -1507,10 +1617,15 @@ def select(
     """
     cache = cache if cache is not None else RunCache()
     terms = tokenize(task)
+    # Built once per run from the paths discover() already returned -- no
+    # extra file reads -- and shared across every file's _analyze() call
+    # below so a repo-wide naming convention (page.tsx, __init__.py, ...)
+    # is recognized as such. See compute_filename_word_counts().
+    filename_word_counts = compute_filename_word_counts(discovered)
 
     scored: list[tuple[float, DiscoveredFile, str]] = []
     for discovered_file in discovered:
-        score, reason = _analyze(discovered_file, terms, cache)
+        score, reason = _analyze(discovered_file, terms, cache, filename_word_counts)
         scored.append((score, discovered_file, reason))
 
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
