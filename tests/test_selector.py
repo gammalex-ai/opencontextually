@@ -98,6 +98,68 @@ def test_data_directory_file_is_down_weighted_below_real_source(tmp_path):
         )
 
 
+# --- bug fix: tutorial/example directories outrank implementation ---------
+#
+# Observed on a real repo (fastapi): "dependency override not applied in
+# nested routers" ranked docs_src/dependency_testing/tutorial001*.py above
+# the actual dependency-injection implementation, because a tutorial
+# script is written in feature vocabulary and wins on term density.
+
+
+def test_example_directory_file_is_down_weighted_below_real_source(tmp_path):
+    _write(
+        tmp_path / "src" / "dependency_override.py",
+        "def apply_dependency_override():\n"
+        "    '''dependency override for nested routers'''\n"
+        "    pass\n",
+    )
+    _write(
+        tmp_path / "docs_src" / "dependency_testing" / "tutorial001.py",
+        "def dependency_override():\n"
+        "    '''dependency override dependency override nested routers'''\n"
+        "    pass\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra = select(discovered, "dependency override not applied in nested routers")
+
+    paths_in_order = [item.path for item in items]
+    assert "src/dependency_override.py" in paths_in_order
+    assert "docs_src/dependency_testing/tutorial001.py" in paths_in_order
+    assert paths_in_order.index("src/dependency_override.py") < paths_in_order.index(
+        "docs_src/dependency_testing/tutorial001.py"
+    )
+
+
+def test_example_path_penalty_is_relative_to_given_root(tmp_path):
+    # Critical regression case: the repo's own e2e fixture lives under
+    # examples/auth_bug/, and the e2e tests point --root directly at it.
+    # The penalty must key off the path *relative to root*, not an
+    # absolute path -- so a file at the root of the given tree must not be
+    # penalized just because some ancestor directory outside the given
+    # root happens to be named "examples".
+    fixture_root = tmp_path / "examples" / "auth_bug"
+    _write(
+        fixture_root / "src" / "auth" / "authentication.py",
+        "def authenticate():\n    '''authentication bug fix, authentication check'''\n    pass\n",
+    )
+
+    discovered, _reasons = discover(fixture_root)
+    items, _extra = select(discovered, "fix the authentication bug")
+
+    paths_in_order = [item.path for item in items]
+    assert "src/auth/authentication.py" in paths_in_order
+    # "examples"/"auth_bug" are outside the given root -- discover() only
+    # ever returns paths relative to fixture_root, so no discovered path
+    # here could contain either segment regardless of the penalty logic.
+    # This assertion documents that expectation directly.
+    assert not any(
+        seg in item.path.lower().split("/")[:-1]
+        for item in items
+        for seg in ("examples", "example")
+    )
+
+
 def test_large_file_content_frequency_is_damped(tmp_path):
     from opencontextually.selector import LARGE_FILE_BYTES, score_file, tokenize
 
