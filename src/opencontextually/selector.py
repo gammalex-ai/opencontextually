@@ -15,7 +15,7 @@ import re
 from pathlib import PurePosixPath
 
 from .context import ContextItem, Excerpt
-from .discovery import DATA_DIR_SEGMENTS, DiscoveredFile
+from .discovery import CONFIG_EXTENSIONS, DATA_DIR_SEGMENTS, DiscoveredFile
 from .filecache import RunCache
 
 # --------------------------------------------------------------------------
@@ -252,7 +252,27 @@ _SECRET_KEY_LINE_RE = re.compile(
 _ENTROPY_PREFIXED_PATTERNS = [
     re.compile(r"\bsk-[A-Za-z0-9_]{10,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    # GitHub's own prefixed token formats (personal access token, OAuth,
+    # server-to-server, refresh, fine-grained PAT).
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
 ]
+
+# JWT: three base64url segments joined by dots (header.payload.signature).
+# Dots are not in _ENTROPY_GENERIC_RE's character class (see below), so a
+# JWT needs its own shape check -- each segment is fenced off by the dots,
+# meaning the generic catch-all would only ever see the three pieces in
+# isolation and might not clear its length floor on any one of them.
+_JWT_RE = re.compile(
+    r"\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"
+)
+
+# PEM key/cert blocks. Body lines are handled by tracking open/close state
+# across the whole text in redact_text() (a single _redact_line() call only
+# ever sees one line and has no memory of "we're inside a PEM block").
+_PEM_BEGIN_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----")
+_PEM_END_RE = re.compile(r"-----END [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----")
+
 # No "/" in the generic catch-all's character class: a versioned URL or a
 # repo-relative file path (both observed on a real repo during step-11
 # evaluation, e.g. "https://dali.yenk.dev/schemas/canonical-citation-v1.json"
@@ -805,6 +825,16 @@ def expand_transitively(
 
 
 def _looks_like_secret_key(key: str) -> bool:
+    """Name-only judgment: does this identifier *look* like it names a
+    secret? Used two ways elsewhere: (1) here, as one weak signal feeding
+    the value-shape decision below -- never sufficient by itself; (2) in
+    checks.py, to decide whether a config key is sensitive enough that a
+    `configuration_discrepancy` finding should suppress it entirely
+    (keeping that a name-only judgment is intentional there -- it must
+    still refuse to *report* a discrepancy over a plausibly-secret key
+    even when the "value" is a duration/port/etc. that isn't found by the
+    value-shape rules below).
+    """
     key_lower = _split_camel_and_snake(key.strip()).lower()
     if any(sub in key_lower for sub in _SECRET_KEY_SUBSTRINGS):
         return True
@@ -813,30 +843,175 @@ def _looks_like_secret_key(key: str) -> bool:
     return False
 
 
-def _redact_line(line: str) -> str:
+# --- bug fix: redaction judged the variable name, never the value ---
+#
+# `_looks_like_secret_key()` alone used to be sufficient to mask an entire
+# `key = value` line. That does not converge: `key`, `secret`, and `token`
+# are among the most common identifiers in ordinary code, so on a real
+# repo it masked `token = token[CSRF_SECRET_LENGTH:]`, `key =
+# sorted(d.keys())[0]`, `secret = compute_secret(user, salt)`,
+# `password_field = form.fields["password"]`, `api_key_header =
+# request.headers.get("X-Api-Key")`, and `self.private_key_path =
+# Path(cfg.dir) / "id_rsa"` -- none of which hold a credential; all of
+# which are an expression, a call, a subscript, or an attribute access.
+# An earlier version of this fix tried to tell those apart from a real
+# scalar using only value *punctuation* (does it contain `()[]{}`?), with
+# no notion of which file the line came from. Sweeping that version
+# against a real repo (django) showed it isn't enough: punctuation-only
+# can't tell a bare *scalar* (`hunter2verylongpasswordvalue`, the shape a
+# real `.env`/YAML value takes) from a bare *identifier reference*
+# (`session_key = self.session.session_key`, `_csrf_id_token =
+# MASKED_TEST_SECRET2`, `post_token=None`, `self.token_type = token_type`)
+# -- neither contains any punctuation, so both are indistinguishable by
+# shape alone. The two need different defaults, and that default is
+# exactly what the file's role already tells us.
+#
+# The fix judges the *value*, not the name -- and, for a bare/unquoted
+# value, judges it differently depending on whether the line came from a
+# config-role file (`.env`/YAML/INI/JSON/TOML -- `is_config=True`) or a
+# code file (`is_config=False`, the default):
+#
+#   - **config file, any value shape**: a suspicious key name is enough to
+#     redact the whole value outright, exactly as before. This is where
+#     real credentials actually live and it must stay conservative --
+#     `configuration_discrepancy` also depends on key names (not values)
+#     surviving redaction.
+#   - **code file**: a suspicious key name only matters once the value is
+#     a plain quoted string literal (`_extract_string_literal` below) --
+#     something that really could be a hardcoded secret. A bare
+#     identifier, dotted attribute path, keyword (`None`/`True`/`False`),
+#     number, or any call/subscript/attribute-access expression is never
+#     redacted on name alone, no matter how suspicious the name looks.
+#     This is what leaves all six BAD lines above untouched while still
+#     catching `SECRET_KEY = "django-insecure-..."` and `api_key =
+#     "sk-proj-..."`.
+#
+# The quoted-literal rule for code files is deliberately a recall-over-
+# precision trade in the *other* direction: `password = "hunter2"` still
+# redacts even though "hunter2" clears no entropy/length bar on its own --
+# leak risk is concentrated in "a literal string assigned to a
+# suspicious-looking name" and the readability cost of occasionally
+# over-redacting a short literal is near zero.
+#
+# High-entropy / known-shape values (sk-..., AKIA..., gh*_..., JWTs, PEM
+# blocks, long base64/hex runs) are redacted independently of the key name
+# -- and of is_config -- entirely separately, below. See
+# _ENTROPY_PREFIXED_PATTERNS / _ENTROPY_GENERIC_RE / _JWT_RE / the PEM
+# handling in redact_text().
+_STRING_LITERAL_RE = re.compile(
+    r"""^(?:[rRbBfFuU]{1,2})?(?P<q>'''|\"\"\"|'|")(?P<body>.*)(?P=q)$""",
+    re.DOTALL,
+)
+
+
+def _extract_string_literal(value: str) -> str | None:
+    """If `value` (whitespace-trimmed) is, in its entirety, a single
+    quoted string literal -- optionally prefixed with a Python string
+    flag (r/b/f/u, any case/combo) -- return its inner text. Otherwise
+    (an expression, a call, a bare identifier, a number, a keyword, or
+    anything else that isn't just "a string") return None.
+    """
+    match = _STRING_LITERAL_RE.match(value.strip())
+    return match.group("body") if match else None
+
+
+def _should_redact_by_name(key: str, value: str, is_config: bool) -> bool:
+    """Whether a `key <sep> value` line's value should be masked on the
+    strength of the key name alone -- see the comment block above for the
+    config-vs-code rationale.
+    """
+    if not _looks_like_secret_key(key):
+        return False
+    value = value.strip()
+    if not value:
+        return False
+    if is_config:
+        return True
+    return _extract_string_literal(value) is not None
+
+
+# bug fix, take three -- found sweeping this fix against a real repo
+# (sqlfluff): the caller originally passed `is_config=(discovered_file.role
+# == "config")`, but `role == "config"` is a much broader signal than "this
+# is a config-*format* file" -- discovery._classify_role() also assigns
+# "config" to any *.py file that merely lives under a directory literally
+# named "config" (e.g. sqlfluff's src/sqlfluff/core/config/validate.py,
+# ordinary Python). That resurrected exactly the bug this fix addresses,
+# just gated on directory name instead of variable name:
+# `non_type_keys = set(layout_section.keys()) - {"type"}` was masked
+# outright again because its file's *role* was "config" even though the
+# line is Python code. `is_config` must track config *syntax* (would this
+# line plausibly be a bare `.env`/YAML/INI/JSON scalar?), which is a
+# narrower, extension-only question -- deliberately not reusing `role`.
+def _is_config_format_file(path: str) -> bool:
+    name = PurePosixPath(path).name
+    ext = PurePosixPath(name).suffix.lower()
+    if not ext and name.lower() in CONFIG_EXTENSIONS:
+        # Mirrors discovery._classify_role()'s dotfile fallback: ".env" has
+        # no pathlib suffix (a leading-dot-only name), so fall back to the
+        # whole lowered filename.
+        ext = name.lower()
+    return ext in CONFIG_EXTENSIONS
+
+
+def _redact_line(line: str, is_config: bool = False) -> str:
     """Mask the value on a secret-looking `key: value` / `key = value`
-    line, and mask any standalone high-entropy token anywhere in the line
-    (e.g. an `sk-...`/`AKIA...` key or a bare base64/hex secret that isn't
-    behind a recognizable key at all). Key names and line structure
-    survive; only the sensitive-looking value text is replaced.
+    line (see `_should_redact_by_name`), and mask any standalone
+    high-entropy or known-credential-shaped token anywhere in the line
+    (e.g. an `sk-...`/`AKIA...`/`ghp_...` key, a JWT, or a bare base64/hex
+    secret that isn't behind a recognizable key at all) regardless of
+    `is_config`. Key names and line structure survive; only
+    sensitive-looking value text is replaced.
     """
     match = _SECRET_KEY_LINE_RE.match(line)
-    if match and _looks_like_secret_key(match.group("prefix")):
+    if match and _should_redact_by_name(match.group("prefix"), match.group("value"), is_config):
         line = line[: match.start("value")] + REDACTED + line[match.end("value") :]
 
     for pattern in _ENTROPY_PREFIXED_PATTERNS:
         line = pattern.sub(REDACTED, line)
+    line = _JWT_RE.sub(REDACTED, line)
     line = _ENTROPY_GENERIC_RE.sub(_redact_generic_entropy, line)
 
     return line
 
 
-def redact_text(text: str) -> str:
+def redact_text(text: str, is_config: bool = False) -> str:
     """Apply `_redact_line` to every line of `text`, preserving line
     count and structure. This is the only place excerpt text is allowed
     to reach a ContextItem without going through redaction first.
+
+    `is_config` should be True when `text` comes from a config-role file
+    (`.env`/YAML/INI/JSON/TOML) -- see the comment block above
+    `_should_redact_by_name` for what that changes. It defaults to False
+    (code-file rules) since that is the conservative choice for a caller
+    that doesn't know: a code-mode false negative can still be caught by
+    the shape-based scans below, while config-mode's name-only masking
+    applied to code would resurrect the original bug.
+
+    Also tracks PEM `-----BEGIN ... PRIVATE KEY-----` / `...CERTIFICATE-----`
+    block state across lines (a per-line shape check can't see this on its
+    own): every line strictly between a BEGIN and its matching END marker
+    is treated as key material and replaced outright, since PEM body lines
+    are base64 but are not reliably long/mixed enough per *line* (bodies
+    are typically wrapped at 64-76 chars) to always clear the standalone
+    entropy bar on their own.
     """
-    return "\n".join(_redact_line(line) for line in text.splitlines())
+    out_lines = []
+    in_pem_block = False
+    for line in text.splitlines():
+        if in_pem_block:
+            if _PEM_END_RE.search(line):
+                in_pem_block = False
+                out_lines.append(line)
+            else:
+                out_lines.append(REDACTED)
+            continue
+        if _PEM_BEGIN_RE.search(line):
+            in_pem_block = True
+            out_lines.append(line)
+            continue
+        out_lines.append(_redact_line(line, is_config=is_config))
+    return "\n".join(out_lines)
 
 
 def _def_span(node: ast.AST) -> tuple[int, int]:
@@ -973,11 +1148,21 @@ def _merge_and_cap_spans(
     return capped
 
 
-def _build_excerpts(content: str, weighted_spans: list[tuple[int, int, float]]) -> list[Excerpt]:
+def _build_excerpts(
+    content: str,
+    weighted_spans: list[tuple[int, int, float]],
+    is_config: bool = False,
+) -> list[Excerpt]:
     """Turn weighted candidate spans into the (at most MAX_EXCERPTS_PER_FILE)
     redacted Excerpts for one file: merge, cap span length, keep the
     highest-weight spans up to the per-file cap, then restore reading
     order.
+
+    `is_config` is forwarded to `redact_text` -- see the comment above
+    `_should_redact_by_name` in the redaction section for what it changes.
+    Defaults to False (code-file rules) so existing direct callers/tests
+    that don't pass it keep the conservative (never-name-only-redact-code)
+    behavior.
     """
     if not weighted_spans:
         return []
@@ -994,7 +1179,9 @@ def _build_excerpts(content: str, weighted_spans: list[tuple[int, int, float]]) 
     for start, end, _weight in kept:
         span_text = "\n".join(lines[start - 1 : end])
         span_text = _truncate_chars(span_text)
-        excerpts.append(Excerpt(start_line=start, end_line=end, text=redact_text(span_text)))
+        excerpts.append(
+            Excerpt(start_line=start, end_line=end, text=redact_text(span_text, is_config=is_config))
+        )
     return excerpts
 
 
@@ -1169,7 +1356,9 @@ def attach_excerpts(
                 for start, end in _matched_line_spans(content, terms)
             ]
 
-        item.excerpts = _build_excerpts(content, weighted_spans)
+        item.excerpts = _build_excerpts(
+            content, weighted_spans, is_config=_is_config_format_file(discovered_file.path)
+        )
 
     return _enforce_package_excerpt_budget(items)
 

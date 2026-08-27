@@ -152,17 +152,26 @@ def test_budget_eviction_count_surfaces_in_package_trace(tmp_path):
 
 
 # --- redaction -----------------------------------------------------------
+#
+# These lines are all bare `key: value` / `key=value` scalars in the shape
+# a real `.env`/YAML/INI file uses -- passed with is_config=True, the
+# signal that lets a suspicious key name alone justify redacting the
+# whole value (see the comment above _should_redact_by_name in
+# selector.py). Without is_config, a bare unquoted value is code-file
+# territory and is left to the shape/entropy scans below instead -- see
+# the "redact by value shape, not variable name" section further down for
+# the code-file side of this.
 
 
 def test_redact_masks_colon_form_secret_value():
-    redacted = redact_text("api_key: sk-abcdefghijklmnopqrstuvwxyz123456")
+    redacted = redact_text("api_key: sk-abcdefghijklmnopqrstuvwxyz123456", is_config=True)
     assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in redacted
     assert "api_key" in redacted
     assert "«redacted»" in redacted
 
 
 def test_redact_masks_equals_form_secret_value():
-    redacted = redact_text("SECRET_KEY=zzsupersecretvalue1234567890abcdefzz")
+    redacted = redact_text("SECRET_KEY=zzsupersecretvalue1234567890abcdefzz", is_config=True)
     assert "zzsupersecretvalue1234567890abcdefzz" not in redacted
     assert "SECRET_KEY" in redacted
 
@@ -170,7 +179,8 @@ def test_redact_masks_equals_form_secret_value():
 def test_redact_masks_password_and_token_keys():
     redacted = redact_text(
         "password: hunter2verylongpasswordvalue\n"
-        "auth_token: eyabcdefghijklmnopqrstuvwxyz0123456789\n"
+        "auth_token: eyabcdefghijklmnopqrstuvwxyz0123456789\n",
+        is_config=True,
     )
     assert "hunter2verylongpasswordvalue" not in redacted
     assert "eyabcdefghijklmnopqrstuvwxyz0123456789" not in redacted
@@ -193,15 +203,17 @@ def test_redact_does_not_flag_token_count_keys_as_secrets():
     """"token" alone is not a secret indicator: "max_tokens"/"num_tokens"
     are ordinary LLM parameters, not credentials.
     """
-    redacted = redact_text("max_tokens: Must be a positive integer.")
+    redacted = redact_text("max_tokens: Must be a positive integer.", is_config=True)
     assert redacted == "max_tokens: Must be a positive integer."
 
-    redacted = redact_text("num_tokens = 4096")
+    redacted = redact_text("num_tokens = 4096", is_config=True)
     assert "«redacted»" not in redacted
 
 
 def test_redact_still_flags_real_token_keys_as_secrets():
-    redacted = redact_text("access_token: eyabcdefghijklmnopqrstuvwxyz0123456789")
+    redacted = redact_text(
+        "access_token: eyabcdefghijklmnopqrstuvwxyz0123456789", is_config=True
+    )
     assert "eyabcdefghijklmnopqrstuvwxyz0123456789" not in redacted
     assert "access_token" in redacted
 
@@ -232,6 +244,105 @@ def test_redact_masks_standalone_high_entropy_token_without_key():
     redacted = redact_text("# leaked earlier: AKIAABCDEFGHIJKLMNOP")
     assert "AKIAABCDEFGHIJKLMNOP" not in redacted
     assert "«redacted»" in redacted
+
+
+# --- bug fix: redact by value shape, not variable name --------------------
+#
+# The eight-case table from the fix's plan of record. The six "BAD" lines
+# are ordinary code that used to be masked purely because the variable
+# name contained "key"/"secret"/"token"/"password" -- the value is an
+# expression, call, subscript, or attribute access, never a literal that
+# could leak, and must survive untouched. The two "ok" lines are genuine
+# assignments of a literal-looking secret to a suspicious name and must
+# still redact.
+
+
+def test_redact_leaves_slice_expression_on_suspicious_name_untouched():
+    line = "token = token[CSRF_SECRET_LENGTH:]"
+    assert redact_text(line) == line
+
+
+def test_redact_leaves_dict_keys_call_on_suspicious_name_untouched():
+    line = "key = sorted(d.keys())[0]"
+    assert redact_text(line) == line
+
+
+def test_redact_leaves_function_call_on_suspicious_name_untouched():
+    line = "secret = compute_secret(user, salt)"
+    assert redact_text(line) == line
+
+
+def test_redact_leaves_subscript_attribute_access_untouched():
+    line = 'password_field = form.fields["password"]'
+    assert redact_text(line) == line
+
+
+def test_redact_leaves_method_call_on_suspicious_name_untouched():
+    line = 'api_key_header = request.headers.get("X-Api-Key")'
+    assert redact_text(line) == line
+
+
+def test_redact_leaves_path_expression_on_suspicious_name_untouched():
+    line = 'self.private_key_path = Path(cfg.dir) / "id_rsa"'
+    assert redact_text(line) == line
+
+
+def test_redact_still_masks_django_style_secret_key_literal():
+    line = 'SECRET_KEY = "django-insecure-8f2h4kd9sldkfj2h4kjhsdf98"'
+    redacted = redact_text(line)
+    assert "django-insecure-8f2h4kd9sldkfj2h4kjhsdf98" not in redacted
+    assert "SECRET_KEY" in redacted
+    assert "«redacted»" in redacted
+
+
+def test_redact_still_masks_api_key_literal():
+    line = 'api_key = "sk-proj-A9dK2mQ7xR4pL8vN3wZ1tY6uB5cE0fG"'
+    redacted = redact_text(line)
+    assert "sk-proj-A9dK2mQ7xR4pL8vN3wZ1tY6uB5cE0fG" not in redacted
+    assert "api_key" in redacted
+    assert "«redacted»" in redacted
+
+
+def test_redact_safety_fallback_masks_short_literal_on_suspicious_name():
+    """Deliberate recall-over-precision trade: a short quoted string
+    literal assigned to a suspicious-named key still redacts even though
+    it clears none of the entropy/length bars -- leak risk is
+    concentrated there and the readability cost is near zero.
+    """
+    line = 'password = "hunter2"'
+    redacted = redact_text(line)
+    assert "hunter2" not in redacted
+    assert "«redacted»" in redacted
+
+
+def test_redact_masks_github_token_prefix():
+    redacted = redact_text("GITHUB_TOKEN = ghp_abcdefghijklmnopqrstuvwxyz0123456789")
+    assert "ghp_abcdefghijklmnopqrstuvwxyz0123456789" not in redacted
+    assert "«redacted»" in redacted
+
+
+def test_redact_masks_jwt_shape():
+    jwt = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        ".eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ"
+        ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    redacted = redact_text(f"auth = '{jwt}'")
+    assert jwt not in redacted
+    assert "«redacted»" in redacted
+
+
+def test_redact_masks_pem_private_key_block():
+    pem = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEpAIBAAKCAQEA1c7+9z5Pad7OejecsQ0bu3aumnAxuNbaBMJXW9Btm3RE\n"
+        "u2xW1uUqmw0z5nWCJIYPBBpb9jRqfhBjq1QhLGSFvGDpBUJVE4c1JZKQZBcE\n"
+        "-----END RSA PRIVATE KEY-----\n"
+    )
+    redacted = redact_text(pem)
+    assert "MIIEpAIBAAKCAQEA1c7" not in redacted
+    assert "-----BEGIN RSA PRIVATE KEY-----" in redacted
+    assert "-----END RSA PRIVATE KEY-----" in redacted
 
 
 def test_env_secret_never_appears_anywhere_in_serialized_package(tmp_path):
