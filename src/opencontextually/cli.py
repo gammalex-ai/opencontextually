@@ -33,6 +33,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the ContextPackage as JSON (package.to_dict()) instead of plain text",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="include bounded code excerpts under each shown item (plain-text output only)",
+    )
+    parser.add_argument(
+        "--all",
+        dest="show_all",
+        action="store_true",
+        help="list every included file instead of the top slice (plain-text output only)",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -45,9 +57,12 @@ def main(argv: list[str] | None = None) -> int:
 
     package = get_context(args.task, root=root)
     if args.json:
+        # --json is the machine path: always full-fidelity, byte-identical
+        # regardless of -v/--all, which only affect the human-readable
+        # render() below.
         print(json.dumps(package.to_dict(), indent=2))
     else:
-        print(package.render())
+        print(package.render(verbose=args.verbose, show_all=args.show_all))
     return 0
 
 

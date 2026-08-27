@@ -17,45 +17,44 @@ opencontextually "fix the authentication bug"
 ```
 
 Run from `examples/auth_bug/` (a small fixture with an auth module, a
-config file, docs, and a test file), this is the real output — trimmed
-with `...` where noted, nothing added:
+config file, docs, and a test file), this is the real, unedited output of
+`octx "fix the authentication bug"`:
 
 ```
-Task: fix the authentication bug
+fix the authentication bug
+6 relevant · 21 excluded
 
-Included (6):
-  1. src/auth/middleware.py [source] score=10.16
-     reason: defines AuthenticationError
-     lines 19-20:
-       class AuthenticationError(Exception):
-           """Raised when a request cannot be authenticated."""
-  2. tests/test_auth.py [test] score=6.16
-     ...
-  3. src/users/session.py [source] score=5.08
-     reason: imported by middleware.py
-     via: src/auth/middleware.py imports src/users/session.py
-     ...
-  ... (3 more: README.md, config/auth.yaml, docs/security.md)
+  src/auth/middleware.py  defines AuthenticationError
+  src/users/session.py    imported by middleware.py  ← via src/auth/middleware.py imports src/use...
+  tests/test_auth.py      imports middleware.py  ← via tests/test_auth.py imports src/auth/middle...
+  README.md               defines authentication requirements
+  config/auth.yaml        configuration referenced by authentication code
+  docs/security.md        defines authentication requirements
 
-Conflicts (1):
-  1. session.timeout_minutes
-     config/auth.yaml:3 declares 60 minutes, but docs/security.md:6 says 30 minutes
+  ⚠ session.timeout_minutes: config/auth.yaml:3 declares 60 minutes, but docs/security.md:6 says 30 minutes
+  ○ No test references session timeout minutes (config/auth.yaml:3)
+  ○ No test references session expired (src/users/session.py:67)
 
-Missing (2):
-  1. No test references session timeout minutes
-     referenced in config/auth.yaml:3
-  2. No test references session expired
-     referenced in src/users/session.py:67
+  -v for code excerpts
 
-Excluded: 21 unrelated files
-  below_threshold=21, binary=0, duplicate=0, ignored=0, over_budget=0, over_cap=0, oversize=0
+Excluded: 21 unrelated files (below_threshold=21, binary=0, duplicate=0, ignored=0, over_budget=0, over_cap=0, oversize=0)
 
 Checks run: configuration_discrepancy, test_reference_gap
 ```
 
 `session.py` is not named in the task and does not match it lexically — it
-is included because `middleware.py` imports it, and the `via:` line shows
-that edge. That is the result a ranked grep cannot produce.
+is included because `middleware.py` imports it, and the `← via` marker
+shows that edge. That is the result a ranked grep cannot produce.
+
+This compact list is the default because it is meant to be *read* — a
+human triaging a task can scan six lines and decide what to open. The two
+findings (`⚠` configuration discrepancy, `○` test reference gap) always
+show in full, since they're findings, not files to page through. Run with
+`-v` to add bounded code excerpts under each shown item, or `--all` to list
+every included file instead of the top slice (both compose: `-v --all`).
+`octx --json` (equivalently `package.to_dict()`) is unaffected by either
+flag — it is always the full-fidelity machine representation, meant for
+handing to an agent rather than reading in a terminal.
 
 ## What it does
 

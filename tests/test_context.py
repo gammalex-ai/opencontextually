@@ -23,7 +23,26 @@ def test_render_and_to_dict_roundtrip():
     rendered = package.render()
     assert "fix the authentication bug" in rendered
     assert "src/auth/session.py" in rendered
-    assert "src/auth/middleware.py -> src/auth/session.py" in rendered
+    # The compact default shows a "via" marker for import-reached items,
+    # naming the edge path -- truncated to fit the terminal width if
+    # needed, so check for the marker and the importer rather than the
+    # full (possibly truncated) chain text.
+    assert "via" in rendered
+    assert "src/auth/middleware.py" in rendered
+
+    # A wide enough terminal shows the full edge chain untruncated.
+    import shutil as _shutil
+
+    original_get_terminal_size = _shutil.get_terminal_size
+    _shutil.get_terminal_size = lambda fallback=(80, 24): _shutil.os.terminal_size((200, 24))
+    try:
+        wide_rendered = package.render()
+    finally:
+        _shutil.get_terminal_size = original_get_terminal_size
+    assert "src/auth/middleware.py -> src/auth/session.py" in wide_rendered
+
+    verbose_rendered = package.render(verbose=True)
+    assert "def expire():" in verbose_rendered
 
     as_dict = package.to_dict()
     assert as_dict["task"] == "fix the authentication bug"

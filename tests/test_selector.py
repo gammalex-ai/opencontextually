@@ -353,4 +353,4 @@ def test_cli_exits_0_and_prints_render_on_good_root(tmp_path):
     )
     assert result.returncode == 0
     assert "auth.py" in result.stdout
-    assert "Task: fix the auth bug" in result.stdout
+    assert "fix the auth bug" in result.stdout
