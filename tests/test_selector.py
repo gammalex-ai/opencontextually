@@ -52,7 +52,7 @@ def test_scoring_ranks_filename_and_symbol_matches_above_content_only(tmp_path):
     _write(tmp_path / "src" / "other.py", "def noop():\n    pass\n")
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix the session bug")
+    items, _extra, _stats = select(discovered, "fix the session bug")
 
     paths_in_order = [item.path for item in items]
     assert "src/auth/session.py" in paths_in_order
@@ -88,7 +88,7 @@ def test_data_directory_file_is_down_weighted_below_real_source(tmp_path):
     )
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix citation scoring")
+    items, _extra, _stats = select(discovered, "fix citation scoring")
 
     paths_in_order = [item.path for item in items]
     assert "src/scoring.py" in paths_in_order
@@ -121,7 +121,7 @@ def test_example_directory_file_is_down_weighted_below_real_source(tmp_path):
     )
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "dependency override not applied in nested routers")
+    items, _extra, _stats = select(discovered, "dependency override not applied in nested routers")
 
     paths_in_order = [item.path for item in items]
     assert "src/dependency_override.py" in paths_in_order
@@ -145,7 +145,7 @@ def test_example_path_penalty_is_relative_to_given_root(tmp_path):
     )
 
     discovered, _reasons = discover(fixture_root)
-    items, _extra = select(discovered, "fix the authentication bug")
+    items, _extra, _stats = select(discovered, "fix the authentication bug")
 
     paths_in_order = [item.path for item in items]
     assert "src/auth/authentication.py" in paths_in_order
@@ -196,7 +196,7 @@ def test_select_caps_at_max_seeds(tmp_path):
         _write(tmp_path / f"auth_{i}.py", f"# auth file {i}\n")
 
     discovered, _reasons = discover(tmp_path)
-    items, extra = select(discovered, "fix the auth bug")
+    items, extra, _stats = select(discovered, "fix the auth bug")
 
     assert len(items) == MAX_SEEDS
     assert extra["over_cap"] == 5
@@ -207,7 +207,7 @@ def test_select_ignores_syntax_error_python_file(tmp_path):
 
     discovered, _reasons = discover(tmp_path)
     # Should not raise despite the SyntaxError during ast.parse.
-    items, _extra = select(discovered, "fix the auth bug")
+    items, _extra, _stats = select(discovered, "fix the auth bug")
     assert any(item.path == "broken_auth.py" for item in items)
 
 
@@ -234,7 +234,7 @@ def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
     )
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix the authentication bug")
+    items, _extra, _stats = select(discovered, "fix the authentication bug")
 
     scores = [item.score for item in items]
     assert scores == sorted(scores, reverse=True), scores
@@ -279,7 +279,7 @@ def test_source_outranks_test_file_that_mentions_terms_more_often(tmp_path):
     _write(tmp_path / "tests" / "test_sessions.py", test_defs)
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix redirect handling when a session cookie is set")
+    items, _extra, _stats = select(discovered, "fix redirect handling when a session cookie is set")
 
     paths_in_order = [item.path for item in items]
     assert "src/sessions.py" in paths_in_order
@@ -302,7 +302,7 @@ def test_test_file_still_included_not_dropped(tmp_path):
     _write(tmp_path / "tests" / "test_sessions.py", test_defs)
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix redirect handling when a session cookie is set")
+    items, _extra, _stats = select(discovered, "fix redirect handling when a session cookie is set")
 
     paths_in_order = [item.path for item in items]
     assert "tests/test_sessions.py" in paths_in_order

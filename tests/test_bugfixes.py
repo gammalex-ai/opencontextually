@@ -80,7 +80,7 @@ def test_scoring_does_not_match_bare_substring_in_identifier(tmp_path):
     _write(tmp_path / "auth" / "user_session.py", "class UserSession:\n    pass\n")
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix the user session")
+    items, _extra, _stats = select(discovered, "fix the user session")
 
     paths = {item.path for item in items}
     assert "auth/user_session.py" in paths
@@ -158,7 +158,7 @@ def test_minified_asset_is_not_content_matched(tmp_path):
     _write(tmp_path / "src" / "widget.py", "def handle_widget():\n    pass\n")
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix the user widget")
+    items, _extra, _stats = select(discovered, "fix the user widget")
 
     paths = {item.path for item in items}
     assert "public/bundle.min.js" not in paths
@@ -179,7 +179,7 @@ def test_single_incidental_prose_mention_does_not_clear_threshold(tmp_path):
     )
 
     discovered, _reasons = discover(tmp_path)
-    items, _extra = select(discovered, "fix the user login and session handling")
+    items, _extra, _stats = select(discovered, "fix the user login and session handling")
 
     assert items == []
 

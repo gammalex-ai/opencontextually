@@ -674,9 +674,16 @@ def _analyze(
     terms: list[str],
     cache: RunCache | None = None,
     filename_word_counts: dict[str, int] | None = None,
-) -> tuple[float, str]:
+) -> tuple[float, str, frozenset[str]]:
     """Score a single discovered file against `terms`, returning
-    (score, reason).
+    (score, reason, distinct_matched_terms).
+
+    `distinct_matched_terms` is the same set _analyze already builds
+    internally to compute coverage_ratio (filename_terms | symbol_terms |
+    content_term_counts) -- returned here too so callers (weak-signal
+    detection in select()) can see *which* terms this file actually
+    corroborated without re-deriving it from `reason`, which only ever
+    names the single strongest signal and is lossy for that purpose.
 
     `cache`, when given, memoizes this file's content and parsed AST facts
     across the whole run so scoring, import-graph construction, and excerpt
@@ -807,7 +814,7 @@ def _analyze(
         # per-item explanation of *why* this representative was kept.
         copy_word = "copy" if discovered_file.duplicate_count == 1 else "copies"
         reason = f"{reason} ({discovered_file.duplicate_count} duplicate {copy_word} collapsed)"
-    return score, reason
+    return score, reason, frozenset(distinct_matched_terms)
 
 
 def _module_parts(rel_path: str) -> tuple[tuple[str, ...], bool]:
@@ -1598,16 +1605,25 @@ def score_file(
     matched were unique to the repo (the pre-rarity-fix behavior), which
     is what existing single-file callers, including tests, already expect.
     """
-    score, _reasons = _analyze(discovered_file, terms, filename_word_counts=filename_word_counts)
+    score, _reason, _matched_terms = _analyze(discovered_file, terms, filename_word_counts=filename_word_counts)
     return score
 
 
 def select(
     discovered: list[DiscoveredFile], task: str, cache: RunCache | None = None
-) -> tuple[list[ContextItem], dict[str, int]]:
+) -> tuple[list[ContextItem], dict[str, int], dict]:
     """Tokenize `task`, score every discovered file, and return
     (ranked ContextItems above threshold and within the cap,
-    extra exclusion-reason counts for "below_threshold" and "over_cap").
+    extra exclusion-reason counts for "below_threshold" and "over_cap",
+    selection_stats).
+
+    `selection_stats` is the raw ingredients for weak-signal detection
+    (see detect_weak_signal()), not a verdict: {"terms": the tokenized
+    task terms, "term_file_counts": term -> number of discovered files
+    whose distinct_matched_terms include that term}. Computed here
+    because this is the one place every discovered file is already
+    scored against `terms` -- recomputing it downstream would mean
+    re-reading and re-parsing every file a second time.
 
     `cache` (see filecache.RunCache), when given, is shared with the
     caller's later attach_excerpts()/checks calls for this same run, so a
@@ -1623,10 +1639,22 @@ def select(
     # is recognized as such. See compute_filename_word_counts().
     filename_word_counts = compute_filename_word_counts(discovered)
 
-    scored: list[tuple[float, DiscoveredFile, str]] = []
+    scored: list[tuple[float, DiscoveredFile, str, frozenset[str]]] = []
     for discovered_file in discovered:
-        score, reason = _analyze(discovered_file, terms, cache, filename_word_counts)
-        scored.append((score, discovered_file, reason))
+        score, reason, matched_terms = _analyze(discovered_file, terms, cache, filename_word_counts)
+        scored.append((score, discovered_file, reason, matched_terms))
+
+    # term -> how many discovered files (regardless of whether they cleared
+    # SCORE_THRESHOLD) corroborated that term by any signal. This is the
+    # same file-count intuition compute_filename_word_counts() applies to
+    # filenames, generalized to every signal _analyze() considers -- it is
+    # what lets weak-signal detection tell "page" (a framework convention,
+    # present in a dozen filenames) apart from a genuinely distinctive term
+    # that happens to match only one file.
+    term_file_counts: dict[str, int] = {t: 0 for t in terms}
+    for _score, _discovered_file, _reason, matched_terms in scored:
+        for t in matched_terms:
+            term_file_counts[t] = term_file_counts.get(t, 0) + 1
 
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
     below_count = len(scored) - len(above)
@@ -1644,8 +1672,9 @@ def select(
             role=discovered_file.role,
             reason=reason,
             score=score,
+            matched_terms=sorted(matched_terms),
         )
-        for score, discovered_file, reason in kept
+        for score, discovered_file, reason, matched_terms in kept
     ]
 
     expanded_items, expansion_over_cap_count = expand_transitively(seed_items, discovered, cache)
@@ -1663,4 +1692,112 @@ def select(
         "below_threshold": below_count,
         "over_cap": seed_over_cap_count + expansion_over_cap_count + final_over_cap_count,
     }
-    return final_items, extra_exclusions
+    selection_stats = {"terms": terms, "term_file_counts": term_file_counts}
+    return final_items, extra_exclusions, selection_stats
+
+
+# --- weak-signal detection ------------------------------------------------
+#
+# A file the developer did not name but that the import graph reaches is
+# the hypothesis; the failure mode this guards against is the opposite
+# case, where nothing genuinely relevant exists but SELECT still clears
+# SCORE_THRESHOLD -- typically because one task term happens to be a
+# repo-wide naming convention (Next.js's `page.tsx`) or a word that shows
+# up as an incidental one-off mention in a couple of files. Neither is
+# "no relevant context" (something *did* score above threshold) nor a
+# confident answer (nothing corroborates it) -- it is a third state.
+#
+# Two conditions, both required:
+#
+# 1. Multi-term only. A single-term task (`octx "applications"`) has
+#    coverage_ratio == 1.0 for any file that matches at all -- "only one
+#    *strong* term matched" is true of every single-term task by
+#    construction, so the warning would be meaningless noise there.
+#    Requiring >=2 terms is what makes condition 2 a real signal rather
+#    than a tautology.
+#
+# 2. No included file corroborates with more than one *individually
+#    strong* term. "Strong" is the same per-term weakness test used to
+#    decide whether to warn at all (below): WEAK_FILENAME_COMMON_COUNT+
+#    files sharing a path word is a repo convention (`page.tsx`), not a
+#    distinctive name, and a term absent from every filename that backs
+#    at most WEAK_CONTENT_RARE_COUNT files total is a thin, incidental
+#    mention -- neither counts as real corroboration even when two of
+#    them happen to land in the same file. Folding the weakness test into
+#    the corroboration check (rather than treating "matches >1 term" and
+#    "the matched terms are weak" as two independent conditions) matters
+#    in practice: on a real repo it is common for an otherwise-correct,
+#    single-strong-signal file (a `page.tsx` filename hit) to also
+#    contain an incidental second-term mention -- a comment, an id
+#    string, a nearby unrelated word -- that would otherwise look like
+#    "multi-term corroboration" and wrongly suppress the warning. A file
+#    that combines two genuinely rare, distinctive terms (filename or
+#    symbol matches, not coincidental prose) is real convergent evidence
+#    and correctly is NOT weak -- e.g. "navigation" matching only
+#    lib/navigation.ts is a strong signal on its own even though it is a
+#    single term matching "few files": a one-of-a-kind filename hit is
+#    exactly the targeted result SELECT exists to surface.
+#
+# Read from ContextItem.matched_terms (see select() above), not
+# re-derived from `reason` -- `reason` only ever names a file's single
+# strongest signal (_build_reason()'s leading-signal rule), so a file
+# that matched two terms but whose reason mentions only the stronger one
+# would look single-term from `reason` alone. Transitively-expanded items
+# (ContextItem.matched_terms == []) were reached by import edges, not a
+# term match, so they neither add nor subtract corroboration evidence.
+WEAK_FILENAME_COMMON_COUNT = 4
+WEAK_CONTENT_RARE_COUNT = 5
+
+
+def detect_weak_signal(
+    terms: list[str],
+    included: list[ContextItem],
+    term_file_counts: dict[str, int],
+    filename_word_counts: dict[str, int],
+) -> dict | None:
+    """Return a weak_signal summary dict (see ContextPackage.weak_signal)
+    when `included` clears SCORE_THRESHOLD but the signal behind it is
+    weak by the conditions above, else None. Never removes anything from
+    `included` -- this only decides whether to warn ahead of it.
+
+    Runs against `included` post-excerpt-eviction (get_context() calls
+    this after dropping fully-evicted items), so a seed whose excerpts
+    were entirely dropped for budget reasons -- and so never reaches the
+    user as an inclusion -- does not spuriously count as corroboration
+    either.
+    """
+    if len(terms) < 2 or not included:
+        return None
+
+    seeds = [item for item in included if item.matched_terms]
+    if not seeds:
+        return None
+
+    def _term_is_weak(term: str) -> bool:
+        fname_count = filename_word_counts.get(term.lower(), 0)
+        if fname_count >= WEAK_FILENAME_COMMON_COUNT:
+            return True
+        if fname_count == 0 and term_file_counts.get(term, 0) <= WEAK_CONTENT_RARE_COUNT:
+            return True
+        return False
+
+    # A file combining two individually-strong terms is real convergent
+    # evidence -- bail out to "not weak" as soon as one is found.
+    for item in seeds:
+        strong_terms = [t for t in item.matched_terms if not _term_is_weak(t)]
+        if len(strong_terms) > 1:
+            return None
+
+    matched_terms: set[str] = set()
+    for item in seeds:
+        matched_terms.update(item.matched_terms)
+    if not matched_terms:
+        return None
+
+    if not all(_term_is_weak(t) for t in matched_terms):
+        return None
+
+    return {
+        "matched_terms": {t: term_file_counts.get(t, 0) for t in sorted(matched_terms)},
+        "term_file_counts": {t: term_file_counts.get(t, 0) for t in terms},
+    }

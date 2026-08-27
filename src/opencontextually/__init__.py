@@ -14,7 +14,7 @@ from .checks import find_configuration_discrepancies, find_test_reference_gaps
 from .context import ContextPackage
 from .discovery import discover
 from .filecache import RunCache
-from .selector import attach_excerpts, select
+from .selector import attach_excerpts, compute_filename_word_counts, detect_weak_signal, select
 
 __version__ = "0.1.0.dev0"
 
@@ -39,7 +39,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     cache = RunCache()
 
     discovered, excluded_by_reason = discover(root_path)
-    items, extra_exclusions = select(discovered, task, cache)
+    items, extra_exclusions, selection_stats = select(discovered, task, cache)
     excerpts_dropped_over_budget = attach_excerpts(items, discovered, task, cache)
 
     # An item whose excerpts were all evicted by the package-wide budget
@@ -52,6 +52,22 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # underneath a "No relevant context found" message.
     fully_evicted = [item for item in items if not item.excerpts]
     items = [item for item in items if item.excerpts]
+
+    # WEAK SIGNAL: something cleared SCORE_THRESHOLD, but for a multi-term
+    # task, no single included file corroborated more than one term and
+    # the term(s) that did match are a repo-wide naming convention or a
+    # thin, incidental mention -- see selector.detect_weak_signal() for
+    # the full rationale. Computed after the eviction above (not from
+    # select()'s raw `items`) so a seed whose excerpts were entirely
+    # dropped for budget reasons does not count as corroboration it never
+    # actually delivers to the user. Never suppresses `items`; only adds a
+    # warning ahead of them in render()/to_dict().
+    weak_signal = detect_weak_signal(
+        selection_stats["terms"],
+        items,
+        selection_stats["term_file_counts"],
+        compute_filename_word_counts(discovered),
+    )
 
     # CHECK: configuration_discrepancy. Lexical, high-precision/low-recall
     # -- see checks.py. In principle a config/doc value disagreement is a
@@ -97,6 +113,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         missing=missing,
         excluded_count=excluded_count,
         excluded_by_reason=excluded_by_reason,
+        weak_signal=weak_signal,
         trace={
             "rules_run": [
                 "lexical_selection",

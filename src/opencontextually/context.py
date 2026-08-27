@@ -62,6 +62,14 @@ class ContextItem:
     score: float
     provenance: list[str] = field(default_factory=list)
     excerpts: list[Excerpt] = field(default_factory=list)
+    # Task terms this item itself directly corroborated (filename, symbol,
+    # or content match) -- the same set selector._analyze() computes
+    # internally for coverage_ratio. Empty for transitively-expanded items,
+    # which were reached by import edges rather than a direct term match.
+    # Threaded through so weak-signal detection (see ContextPackage.
+    # weak_signal) can see real per-file term coverage instead of
+    # re-deriving it from `reason`, which only names one signal.
+    matched_terms: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -75,6 +83,26 @@ class ContextPackage:
     excluded_count: int = 0
     excluded_by_reason: dict[str, int] = field(default_factory=dict)
     trace: dict = field(default_factory=dict)
+    # Set (non-None) when SELECT found something to include, but the
+    # signal behind it is weak: multiple task terms were given, yet no
+    # single included file corroborated more than one of them, and the
+    # term(s) that did match are either a repo-wide naming convention
+    # (e.g. Next.js's `page.tsx`) or backed by only a handful of
+    # incidental mentions. See selector.detect_weak_signal(). Never
+    # suppresses `included` -- this only adds a warning ahead of it.
+    # Shape when present:
+    #   {
+    #     "matched_terms": {term: file_count, ...},       # terms that
+    #         actually contributed an inclusion, each with how many
+    #         discovered files in the repo also contain that term
+    #         (by filename, symbol, or content -- same signal _analyze()
+    #         scores with).
+    #     "term_file_counts": {term: file_count, ...},     # every task
+    #         term (matched or not), same file-count metric, so a term
+    #         that matched nothing at all is reported as 0 rather than
+    #         omitted.
+    #   }
+    weak_signal: dict | None = None
 
     def render(self, verbose: bool = False, show_all: bool = False) -> str:
         """Plain-text rendering for humans.
@@ -105,6 +133,12 @@ class ContextPackage:
         if self.included:
             shown = self.included if show_all else self.included[:DEFAULT_SHOWN]
             hidden = len(self.included) - len(shown)
+
+            if self.weak_signal:
+                lines.extend(self._render_weak_signal_lines(glyphs))
+                lines.append("")
+                lines.append("Showing weak matches anyway:")
+                lines.append("")
 
             path_width = min(
                 max(len(item.path) for item in shown), MAX_PATH_COLUMN
@@ -152,6 +186,45 @@ class ContextPackage:
         budget = max(term_width - len(prefix), 16)
         detail = _truncate(detail, budget)
         return f"{prefix}{detail}"
+
+    # -- weak signal ----------------------------------------------------------
+
+    def _render_weak_signal_lines(self, glyphs) -> list[str]:
+        """Render self.weak_signal (see its shape in the field comment
+        above) as a short, concrete warning: which term(s) actually
+        matched and how common they are, then the other task terms' file
+        counts (including zero, for a term that matched nothing at all),
+        then one actionable suggestion. Never hides the results that
+        follow -- this is prefixed ahead of them, not instead of them.
+        """
+        ws = self.weak_signal
+        matched: dict[str, int] = ws.get("matched_terms", {})
+        all_counts: dict[str, int] = ws.get("term_file_counts", {})
+
+        def _files(count: int) -> str:
+            return "1 file" if count == 1 else f"{count} files"
+
+        if len(matched) == 1:
+            term, count = next(iter(matched.items()))
+            head = f'Weak match. Only "{term}" matched anything, and {_files(count)} share that name.'
+        else:
+            names = ", ".join(f'"{t}"' for t in matched)
+            head = f"Weak match. Only {names} matched anything, and each is common across many files."
+
+        lines = [f"  {glyphs.WARN} {head}"]
+
+        others = [(t, c) for t, c in all_counts.items() if t not in matched]
+        if others:
+            parts = []
+            for term, count in others:
+                if count == 0:
+                    parts.append(f'"{term}" in none')
+                else:
+                    parts.append(f'"{term}" appears in {_files(count)}')
+            lines.append(f"    {', '.join(parts)}.")
+
+        lines.append("    Try naming a specific component, behavior, or file.")
+        return lines
 
     # -- verbose excerpts ----------------------------------------------------
 
