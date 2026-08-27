@@ -25,6 +25,7 @@ import math
 import re
 
 from .discovery import DiscoveredFile
+from .filecache import RunCache
 from .selector import _looks_like_secret_key
 
 RULE_ID = "configuration_discrepancy"
@@ -424,12 +425,11 @@ def _in_inline_code_span(line: str, start: int) -> bool:
     return False
 
 
-def _collect_doc_assertions(doc_files: list[DiscoveredFile]) -> list[dict]:
+def _collect_doc_assertions(doc_files: list[DiscoveredFile], cache: RunCache) -> list[dict]:
     assertions: list[dict] = []
     for doc_file in doc_files:
-        try:
-            content = doc_file.abs_path.read_text(errors="replace")
-        except OSError:
+        content = cache.get_content(doc_file)
+        if not content:
             continue
         lines = content.splitlines()
         code_line_mask = _doc_code_line_mask(content, lines)
@@ -456,7 +456,9 @@ def _collect_doc_assertions(doc_files: list[DiscoveredFile]) -> list[dict]:
     return assertions
 
 
-def find_configuration_discrepancies(discovered: list[DiscoveredFile]) -> list[dict]:
+def find_configuration_discrepancies(
+    discovered: list[DiscoveredFile], cache: RunCache | None = None
+) -> list[dict]:
     """Find same-named scalar settings declared with different values
     across a config file and a doc.
 
@@ -482,12 +484,13 @@ def find_configuration_discrepancies(discovered: list[DiscoveredFile]) -> list[d
     Returns [] when nothing meets the bar above -- never a "no
     discrepancies found" placeholder entry.
     """
+    cache = cache if cache is not None else RunCache()
     config_files = [f for f in discovered if f.role == "config"]
     doc_files = [f for f in discovered if f.role == "docs"]
     if not config_files or not doc_files:
         return []
 
-    doc_assertions = _collect_doc_assertions(doc_files)
+    doc_assertions = _collect_doc_assertions(doc_files, cache)
     if not doc_assertions:
         return []
 
@@ -495,9 +498,8 @@ def find_configuration_discrepancies(discovered: list[DiscoveredFile]) -> list[d
     seen: set[tuple[str, int, str, int]] = set()
 
     for config_file in config_files:
-        try:
-            content = config_file.abs_path.read_text(errors="replace")
-        except OSError:
+        content = cache.get_content(config_file)
+        if not content:
             continue
 
         entries = _parse_config_entries(config_file.path, content)
@@ -700,7 +702,7 @@ _IDENTIFIER_NODE_TYPES = (
 )
 
 
-def _python_identifier_words(content: str) -> list[str] | None:
+def _python_identifier_words(record) -> list[str] | None:
     """Words drawn only from *identifiers actually used as code* in a
     Python test file -- def/class names, name references, attribute
     accesses, call keyword args, and imported names -- deliberately
@@ -715,16 +717,18 @@ def _python_identifier_words(content: str) -> list[str] | None:
     that talks *about* session expiration is not equivalent to a test
     that calls `is_session_expired`.
 
-    Returns None if the content does not parse as Python (the caller
-    falls back to whole-text tokenization for non-Python test files).
+    `record` is the file's filecache.FileRecord: `identifier_nodes` already
+    holds exactly the def/class/Name/Attribute/arg/alias/keyword nodes a
+    dedicated full-tree walk would find, in the same order, from the one
+    walk filecache.RunCache performs per file. Returns None if the content
+    did not parse as Python (the caller falls back to whole-text
+    tokenization for non-Python test files).
     """
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
+    if not record.parse_ok:
         return None
 
     words: list[str] = []
-    for node in ast.walk(tree):
+    for node in record.identifier_nodes:
         if isinstance(node, _IDENTIFIER_NODE_TYPES):
             words.extend(_split_identifier_words(node.name))
         elif isinstance(node, ast.Name):
@@ -742,7 +746,7 @@ def _python_identifier_words(content: str) -> list[str] | None:
     return words
 
 
-def _test_reference_stems(test_files: list[DiscoveredFile]) -> set[str]:
+def _test_reference_stems(test_files: list[DiscoveredFile], cache: RunCache) -> set[str]:
     """Every word (stemmed) that a discovered test file actually
     references as *code* -- see `_python_identifier_words`. Non-Python
     test files fall back to whole-text tokenization, since there is no
@@ -750,12 +754,13 @@ def _test_reference_stems(test_files: list[DiscoveredFile]) -> set[str]:
     """
     stems: set[str] = set()
     for test_file in test_files:
-        try:
-            content = test_file.abs_path.read_text(errors="replace")
-        except OSError:
+        content = cache.get_content(test_file)
+        if not content:
             continue
 
-        words = _python_identifier_words(content) if test_file.path.endswith(".py") else None
+        words = None
+        if test_file.path.endswith(".py"):
+            words = _python_identifier_words(cache.get_record(test_file))
         if words is None:
             words = _split_identifier_words(content)
 
@@ -772,25 +777,23 @@ def _concept_referenced(words: list[str], test_stems: set[str]) -> bool:
     return all(_stem(word) in test_stems for word in words)
 
 
-def _source_symbol_concepts(content: str) -> list[tuple[list[str], int, str]]:
+def _source_symbol_concepts(record) -> list[tuple[list[str], int, str]]:
     """Multi-word concepts decomposed from Python def/class names, e.g.
     `is_session_expired` -> ["session", "expired"] (the filler word "is"
     is dropped). Single-word names never produce a concept here -- see
     module docstring. The third element is the raw symbol name itself
     (not word-split), used to check corroboration against gated call
     sites -- see _gated_call_names().
-    """
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return []
 
+    `record` is the file's filecache.FileRecord; `defs` already holds
+    every FunctionDef/AsyncFunctionDef/ClassDef node from one full-tree
+    walk, same as a dedicated walk here would find.
+    """
     concepts: list[tuple[list[str], int, str]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            words = _meaningful_words(_split_identifier_words(node.name))
-            if len(words) >= _MIN_CONCEPT_WORDS:
-                concepts.append((words, node.lineno, node.name))
+    for node in record.defs:
+        words = _meaningful_words(_split_identifier_words(node.name))
+        if len(words) >= _MIN_CONCEPT_WORDS:
+            concepts.append((words, node.lineno, node.name))
     return concepts
 
 
@@ -841,7 +844,7 @@ def _call_names_in(node: ast.AST) -> set[str]:
     return names
 
 
-def _gated_call_names(items: list, discovered: list[DiscoveredFile]) -> set[str]:
+def _gated_call_names(items: list, discovered: list[DiscoveredFile], cache: RunCache) -> set[str]:
     """Names of symbols called as the test of an `if` whose body raises or
     returns, in Python source files that SELECT matched *directly* against
     this task (empty `item.provenance` -- a real filename/symbol/content
@@ -874,17 +877,10 @@ def _gated_call_names(items: list, discovered: list[DiscoveredFile]) -> set[str]
         discovered_file = discovered_index.get(item.path)
         if discovered_file is None:
             continue
-        try:
-            content = discovered_file.abs_path.read_text(errors="replace")
-        except OSError:
+        record = cache.get_record(discovered_file)
+        if not record.parse_ok:
             continue
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.If):
-                continue
+        for node in record.if_nodes:
             call_names = _call_names_in(node.test)
             if call_names and _short_circuits(node.body):
                 gated.update(call_names)
@@ -896,6 +892,7 @@ def find_test_reference_gaps(
     discovered: list[DiscoveredFile],
     task: str,
     conflicts: list[dict] | None = None,
+    cache: RunCache | None = None,
 ) -> list[dict]:
     """Find def/class names and config keys with real presence in the
     *selected* source/config files (`items`) that no discovered test file
@@ -930,13 +927,14 @@ def find_test_reference_gaps(
     if not selected:
         return []
 
-    test_stems = _test_reference_stems(test_files)
+    cache = cache if cache is not None else RunCache()
+    test_stems = _test_reference_stems(test_files, cache)
     discovered_index = {f.path: f for f in discovered}
 
     corroborated_settings = {
         c["setting"] for c in (conflicts or []) if c.get("rule") == RULE_ID and c.get("setting")
     }
-    gated_names = _gated_call_names(items, discovered)
+    gated_names = _gated_call_names(items, discovered, cache)
 
     # concept key (sorted unique words) -> (display words, path, line,
     # kind, meta) for the first occurrence encountered, so each concept is
@@ -953,16 +951,13 @@ def find_test_reference_gaps(
         discovered_file = discovered_index.get(item.path)
         if discovered_file is None:
             continue
-        try:
-            content = discovered_file.abs_path.read_text(errors="replace")
-        except OSError:
-            continue
+        content = cache.get_content(discovered_file)
         if not content:
             continue
 
         # -- def/class names and config keys defined in this file --
         if item.role == "source" and item.path.endswith(".py"):
-            for words, lineno, name in _source_symbol_concepts(content):
+            for words, lineno, name in _source_symbol_concepts(cache.get_record(discovered_file)):
                 _record(words, item.path, lineno, "source_symbol", name)
         elif item.role == "config":
             for words, lineno, key in _config_key_concepts(item.path, content):

@@ -16,6 +16,7 @@ from pathlib import PurePosixPath
 
 from .context import ContextItem, Excerpt
 from .discovery import DATA_DIR_SEGMENTS, DiscoveredFile
+from .filecache import RunCache
 
 # --------------------------------------------------------------------------
 # Tunable constants. Everything a future tuning pass (step 11) might touch
@@ -489,10 +490,19 @@ def _in_example_path(path: str) -> bool:
     return any(part in EXAMPLE_DIR_SEGMENTS for part in dir_parts)
 
 
-def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, str]:
+def _analyze(
+    discovered_file: DiscoveredFile, terms: list[str], cache: RunCache | None = None
+) -> tuple[float, str]:
     """Score a single discovered file against `terms`, returning
     (score, reason).
+
+    `cache`, when given, memoizes this file's content and parsed AST facts
+    across the whole run so scoring, import-graph construction, and excerpt
+    extraction do not each independently read and parse the same file --
+    see filecache.RunCache. Optional (defaults to a throwaway per-call
+    cache) so this stays callable standalone, e.g. from tests.
     """
+    cache = cache if cache is not None else RunCache()
     filename_score = 0.0
     symbol_score = 0.0
     content_score = 0.0
@@ -506,33 +516,28 @@ def _analyze(discovered_file: DiscoveredFile, terms: list[str]) -> tuple[float, 
         filename_score += WEIGHT_FILENAME * len(filename_terms)
         matched_any = True
 
-    content = ""
-    try:
-        content = discovered_file.abs_path.read_text(errors="replace")
-    except OSError:
-        content = ""
+    content = cache.get_content(discovered_file)
 
     is_asset = _is_asset_like(discovered_file.path, content)
 
     # --- Python symbol definitions ---
+    # Deliberately a full-tree walk (via cache.get_record, not a top-level-
+    # only scan): a matching def/class can be nested inside a function,
+    # method, or another class, and those nested definitions are genuine
+    # signal (e.g. a class's own `def is_expired` method) that a top-level-
+    # only scan would silently miss.
     symbol_names: list[str] = []
     if discovered_file.path.endswith(".py") and content:
-        tree = None
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            tree = None
-        if tree is not None:
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    node_matched = False
-                    for t in terms:
-                        if has_word_match(node.name, t):
-                            symbol_score += WEIGHT_SYMBOL
-                            matched_any = True
-                            node_matched = True
-                    if node_matched:
-                        symbol_names.append(node.name)
+        record = cache.get_record(discovered_file)
+        for node in record.defs:
+            node_matched = False
+            for t in terms:
+                if has_word_match(node.name, t):
+                    symbol_score += WEIGHT_SYMBOL
+                    matched_any = True
+                    node_matched = True
+            if node_matched:
+                symbol_names.append(node.name)
 
     # --- damped content term frequency ---
     # Skipped for minified/generated/vendored assets (is_asset): a bare
@@ -618,23 +623,22 @@ def _resolve_module_tuple(module_tuple: tuple[str, ...], file_index: set[str]) -
     return None
 
 
-def _imports_of(rel_path: str, content: str, file_index: set[str]) -> set[str]:
-    """Parse `content` (the source of `rel_path`) and return the set of
-    first-party file paths it imports. Third-party/stdlib imports (those
-    that do not resolve to a file under file_index) are silently skipped.
-    Files that fail to parse (SyntaxError) yield no imports.
+def _imports_of(rel_path: str, import_nodes: list, file_index: set[str]) -> set[str]:
+    """Return the set of first-party file paths `rel_path` imports, given
+    the Import/ImportFrom AST nodes already collected for it (see
+    filecache.RunCache -- a full-tree walk, since an import can legally
+    appear nested inside a function/conditional, not just at module level).
+    Third-party/stdlib imports (those that do not resolve to a file under
+    file_index) are silently skipped. A file that failed to parse simply
+    has no import nodes, so it yields no imports here -- same end result
+    as the previous per-call ast.parse(), without re-parsing.
     """
-    try:
-        tree = ast.parse(content)
-    except (SyntaxError, ValueError):
-        return set()
-
     module_parts, is_init = _module_parts(rel_path)
     base_package = list(module_parts) if is_init else list(module_parts[:-1])
 
     targets: set[str] = set()
 
-    for node in ast.walk(tree):
+    for node in import_nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 mod_tuple = tuple(alias.name.split("."))
@@ -678,7 +682,7 @@ def _imports_of(rel_path: str, content: str, file_index: set[str]) -> set[str]:
 
 
 def _build_import_graph(
-    discovered: list[DiscoveredFile],
+    discovered: list[DiscoveredFile], cache: RunCache | None = None
 ) -> tuple[dict[str, DiscoveredFile], dict[str, set[str]], dict[str, set[str]]]:
     """Build the first-party Python import graph from `discovered`.
 
@@ -686,17 +690,23 @@ def _build_import_graph(
       - py_files: rel path -> DiscoveredFile, for every discovered .py file
       - outbound: rel path -> set of rel paths it imports
       - inbound: rel path -> set of rel paths that import it
+
+    `cache` (see filecache.RunCache) memoizes each file's content and
+    parsed import nodes so this does not re-read/re-parse a file that
+    scoring (_analyze) or excerpt extraction already parsed this run.
     """
+    cache = cache if cache is not None else RunCache()
     py_files = {f.path: f for f in discovered if f.path.endswith(".py")}
     file_index = set(py_files)
 
     outbound: dict[str, set[str]] = {}
     for path, discovered_file in py_files.items():
-        try:
-            content = discovered_file.abs_path.read_text(errors="replace")
-        except OSError:
-            content = ""
-        outbound[path] = _imports_of(path, content, file_index) if content else set()
+        content = cache.get_content(discovered_file)
+        if content:
+            import_nodes = cache.get_record(discovered_file).imports
+            outbound[path] = _imports_of(path, import_nodes, file_index)
+        else:
+            outbound[path] = set()
 
     inbound: dict[str, set[str]] = {path: set() for path in py_files}
     for source, targets in outbound.items():
@@ -707,7 +717,7 @@ def _build_import_graph(
 
 
 def expand_transitively(
-    seed_items: list[ContextItem], discovered: list[DiscoveredFile]
+    seed_items: list[ContextItem], discovered: list[DiscoveredFile], cache: RunCache | None = None
 ) -> tuple[list[ContextItem], int]:
     """Expand `seed_items` across the first-party Python import graph, both
     directions (files a seed imports, and files that import a seed).
@@ -721,7 +731,7 @@ def expand_transitively(
     Returns (expanded ContextItems, count of candidates dropped for being
     over MAX_EXPANDED).
     """
-    py_files, outbound, inbound = _build_import_graph(discovered)
+    py_files, outbound, inbound = _build_import_graph(discovered, cache)
 
     seed_paths = {item.path for item in seed_items}
     visited = set(seed_paths)
@@ -833,40 +843,36 @@ def _def_span(node: ast.AST) -> tuple[int, int]:
     return start, end
 
 
-def _matched_symbol_spans(content: str, terms: list[str]) -> list[tuple[int, int]]:
+def _matched_symbol_spans(defs: list, terms: list[str]) -> list[tuple[int, int]]:
     """Spans for def/class nodes whose name matches a task term -- the
     same signal _analyze() uses to score a file, but here we need the
     actual line range instead of just a boolean/score contribution.
+
+    `defs` is the file's cached list of FunctionDef/AsyncFunctionDef/
+    ClassDef AST nodes (see filecache.RunCache) -- already the product of
+    a full-tree walk, so a nested match (a method inside a class) is
+    included exactly as it was when this parsed the file itself.
     """
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return []
     spans = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if any(has_word_match(node.name, t) for t in terms):
-                spans.append(_def_span(node))
+    for node in defs:
+        if any(has_word_match(node.name, t) for t in terms):
+            spans.append(_def_span(node))
     return spans
 
 
-def _imported_symbol_spans(content: str, names: set[str]) -> list[tuple[int, int]]:
-    """Spans for def/class nodes in `content` whose name is in `names` --
-    the definitions actually imported by another file, for import-reached
-    items. This is what makes the transitive result usable: session.py's
-    excerpt is SessionStore, not an arbitrary head-of-file slice.
+def _imported_symbol_spans(defs: list, names: set[str]) -> list[tuple[int, int]]:
+    """Spans for def/class nodes in `defs` (see _matched_symbol_spans)
+    whose name is in `names` -- the definitions actually imported by
+    another file, for import-reached items. This is what makes the
+    transitive result usable: session.py's excerpt is SessionStore, not an
+    arbitrary head-of-file slice.
     """
     if not names:
         return []
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return []
     spans = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name in names:
-                spans.append(_def_span(node))
+    for node in defs:
+        if node.name in names:
+            spans.append(_def_span(node))
     return spans
 
 
@@ -997,22 +1003,22 @@ def _truncate_chars(text: str) -> str:
     return text[:MAX_EXCERPT_CHARS].rstrip() + TRUNCATION_MARKER
 
 
-def _imported_names_of(rel_path: str, content: str, file_index: set[str]) -> dict[str, set[str]]:
+def _imported_names_of(
+    rel_path: str, import_nodes: list, file_index: set[str]
+) -> dict[str, set[str]]:
     """Like _imports_of, but returns target path -> the specific names
     imported from it via `from target import name[, ...]`. Plain `import
     module` statements bring no specific names and are not represented
     here -- they carry no excerpt-worthy symbol list.
-    """
-    try:
-        tree = ast.parse(content)
-    except (SyntaxError, ValueError):
-        return {}
 
+    `import_nodes` is the file's cached list of Import/ImportFrom AST
+    nodes (see filecache.RunCache).
+    """
     module_parts, is_init = _module_parts(rel_path)
     base_package = list(module_parts) if is_init else list(module_parts[:-1])
 
     result: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
+    for node in import_nodes:
         if not isinstance(node, ast.ImportFrom):
             continue
 
@@ -1040,20 +1046,27 @@ def _imported_names_of(rel_path: str, content: str, file_index: set[str]) -> dic
     return result
 
 
-def _build_import_name_graph(discovered: list[DiscoveredFile]) -> dict[str, dict[str, set[str]]]:
+def _build_import_name_graph(
+    discovered: list[DiscoveredFile], cache: RunCache | None = None
+) -> dict[str, dict[str, set[str]]]:
     """rel path -> {target rel path -> names imported from it}, for every
     discovered first-party Python file.
+
+    `cache` (see filecache.RunCache) reuses this run's already-parsed
+    import nodes rather than re-reading/re-parsing every file.
     """
+    cache = cache if cache is not None else RunCache()
     py_files = {f.path: f for f in discovered if f.path.endswith(".py")}
     file_index = set(py_files)
 
     graph: dict[str, dict[str, set[str]]] = {}
     for path, discovered_file in py_files.items():
-        try:
-            content = discovered_file.abs_path.read_text(errors="replace")
-        except OSError:
-            content = ""
-        graph[path] = _imported_names_of(path, content, file_index) if content else {}
+        content = cache.get_content(discovered_file)
+        if content:
+            import_nodes = cache.get_record(discovered_file).imports
+            graph[path] = _imported_names_of(path, import_nodes, file_index)
+        else:
+            graph[path] = {}
     return graph
 
 
@@ -1073,7 +1086,10 @@ def _importer_of(item_path: str, provenance: list[str]) -> str | None:
 
 
 def attach_excerpts(
-    items: list[ContextItem], discovered: list[DiscoveredFile], task: str
+    items: list[ContextItem],
+    discovered: list[DiscoveredFile],
+    task: str,
+    cache: RunCache | None = None,
 ) -> int:
     """Populate `item.excerpts` on every item with the bounded, redacted
     spans that justified its inclusion, then enforce the package-wide
@@ -1082,19 +1098,21 @@ def attach_excerpts(
 
     Returns the number of excerpts dropped for being over the package
     budget (for trace["excerpts_dropped_over_budget"]).
+
+    `cache` (see filecache.RunCache) reuses this run's already-read
+    content and already-parsed def/import nodes rather than re-reading and
+    re-parsing every included file.
     """
+    cache = cache if cache is not None else RunCache()
     terms = tokenize(task)
     discovered_index = {f.path: f for f in discovered}
-    import_name_graph = _build_import_name_graph(discovered)
+    import_name_graph = _build_import_name_graph(discovered, cache)
 
     for item in items:
         discovered_file = discovered_index.get(item.path)
         if discovered_file is None:
             continue
-        try:
-            content = discovered_file.abs_path.read_text(errors="replace")
-        except OSError:
-            content = ""
+        content = cache.get_content(discovered_file)
         if not content:
             continue
 
@@ -1109,13 +1127,14 @@ def attach_excerpts(
         structural_spans: list[tuple[int, int, float]] = []
 
         if item.path.endswith(".py"):
+            defs = cache.get_record(discovered_file).defs
             importer = _importer_of(item.path, item.provenance)
             if importer:
                 imported_names = import_name_graph.get(importer, {}).get(item.path, set())
-                for start, end in _imported_symbol_spans(content, imported_names):
+                for start, end in _imported_symbol_spans(defs, imported_names):
                     structural_spans.append((start, end, WEIGHT_IMPORTED_SYMBOL))
 
-            for start, end in _matched_symbol_spans(content, terms):
+            for start, end in _matched_symbol_spans(defs, terms):
                 structural_spans.append((start, end, WEIGHT_MATCHED_SYMBOL))
 
         if discovered_file.role == "config":
@@ -1190,17 +1209,24 @@ def score_file(discovered_file: DiscoveredFile, terms: list[str]) -> float:
 
 
 def select(
-    discovered: list[DiscoveredFile], task: str
+    discovered: list[DiscoveredFile], task: str, cache: RunCache | None = None
 ) -> tuple[list[ContextItem], dict[str, int]]:
     """Tokenize `task`, score every discovered file, and return
     (ranked ContextItems above threshold and within the cap,
     extra exclusion-reason counts for "below_threshold" and "over_cap").
+
+    `cache` (see filecache.RunCache), when given, is shared with the
+    caller's later attach_excerpts()/checks calls for this same run, so a
+    file scored here is not re-read and re-parsed by those later stages.
+    Defaults to a private per-call cache so this stays independently
+    callable (e.g. from tests).
     """
+    cache = cache if cache is not None else RunCache()
     terms = tokenize(task)
 
     scored: list[tuple[float, DiscoveredFile, str]] = []
     for discovered_file in discovered:
-        score, reason = _analyze(discovered_file, terms)
+        score, reason = _analyze(discovered_file, terms, cache)
         scored.append((score, discovered_file, reason))
 
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
@@ -1223,7 +1249,7 @@ def select(
         for score, discovered_file, reason in kept
     ]
 
-    expanded_items, expansion_over_cap_count = expand_transitively(seed_items, discovered)
+    expanded_items, expansion_over_cap_count = expand_transitively(seed_items, discovered, cache)
 
     # Merge seeds and expanded items into a single ranking -- score
     # descending across both groups, tie-broken on path -- rather than

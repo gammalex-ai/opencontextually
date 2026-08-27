@@ -13,6 +13,7 @@ from pathlib import Path
 from .checks import find_configuration_discrepancies, find_test_reference_gaps
 from .context import ContextPackage
 from .discovery import discover
+from .filecache import RunCache
 from .selector import attach_excerpts, select
 
 __version__ = "0.1.0.dev0"
@@ -28,9 +29,18 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     """
     root_path = Path(root).resolve()
 
+    # One cache per call, threaded through every stage below, so a file is
+    # read and ast.parse/ast.walk'd at most once for this run -- see
+    # filecache.RunCache. Built fresh here (never module/global state):
+    # get_context is the entry point a long-lived process (e.g. the MCP
+    # server) calls repeatedly, and each call must see the current
+    # filesystem and release its cache afterward rather than accumulating
+    # memory or serving stale facts across calls.
+    cache = RunCache()
+
     discovered, excluded_by_reason = discover(root_path)
-    items, extra_exclusions = select(discovered, task)
-    excerpts_dropped_over_budget = attach_excerpts(items, discovered, task)
+    items, extra_exclusions = select(discovered, task, cache)
+    excerpts_dropped_over_budget = attach_excerpts(items, discovered, task, cache)
 
     # An item whose excerpts were all evicted by the package-wide budget
     # is no longer a usable inclusion -- it has a reason but nothing to
@@ -58,7 +68,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # already does for its own emptiness case below. Still always recorded
     # in trace["rules_run"], so the render() footer accurately reports
     # which checks ran regardless of whether either found something.
-    conflicts = find_configuration_discrepancies(discovered) if items else []
+    conflicts = find_configuration_discrepancies(discovered, cache) if items else []
 
     # CHECK: test_reference_gap. Lexical, high-precision/low-recall -- see
     # checks.py. Runs only over the files SELECT actually chose for this
@@ -67,7 +77,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # recorded in trace["rules_run"] once it runs, whether or not it
     # finds anything, so the render() footer accurately reports which
     # checks ran.
-    missing = find_test_reference_gaps(items, discovered, task, conflicts=conflicts)
+    missing = find_test_reference_gaps(items, discovered, task, conflicts=conflicts, cache=cache)
 
     excluded_by_reason = dict(excluded_by_reason)
     excluded_by_reason.update(extra_exclusions)
