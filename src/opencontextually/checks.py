@@ -843,14 +843,33 @@ def _call_names_in(node: ast.AST) -> set[str]:
 
 def _gated_call_names(items: list, discovered: list[DiscoveredFile]) -> set[str]:
     """Names of symbols called as the test of an `if` whose body raises or
-    returns, anywhere in the selected Python source. This is the
+    returns, in Python source files that SELECT matched *directly* against
+    this task (empty `item.provenance` -- a real filename/symbol/content
+    hit, not a file only reached by following an import edge). This is the
     corroboration signal for a source-symbol test_reference_gap finding --
     see the "real-repo tuning" note above.
+
+    Restricted to directly-matched files, not every selected item: without
+    this, a gated call sitting entirely inside a transitively-pulled-in
+    file (e.g. one helper calling another inside the same unrelated
+    module) corroborates a finding with no connection to the task at all
+    -- observed on a real repo (click) where an unrelated stream-encoding
+    helper module, reached only because something it imports also imports
+    the seed file, produced four gated-and-uncalled-by-tests findings for
+    a task about option parsing. Requiring the gate itself to live in a
+    file the task's own terms actually matched keeps the corroboration
+    signal tied to the task, while still catching the case that matters:
+    a seed file (e.g. middleware.py, matched on "authentication") gating a
+    call into a symbol defined in a transitively-reached file (e.g.
+    session.py's `is_session_expired`) is exactly the risky, untested path
+    this rule exists to surface.
     """
     discovered_index = {f.path: f for f in discovered}
     gated: set[str] = set()
     for item in items:
         if item.role != "source" or not item.path.endswith(".py"):
+            continue
+        if item.provenance:
             continue
         discovered_file = discovered_index.get(item.path)
         if discovered_file is None:

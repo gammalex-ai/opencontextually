@@ -459,6 +459,99 @@ def test_unreferenced_concept_is_reported_with_evidence_location(tmp_path):
     assert "missing" not in finding["message"].lower()
 
 
+# --- bug fix: test_reference_gap noise from transitively-pulled files ------
+#
+# Real-repo evaluation (click) showed source-symbol corroboration firing
+# from a gated call sitting entirely inside a file SELECT only reached by
+# following an import edge, unrelated to the task's own terms -- four
+# findings about ASCII encoding and binary streams for a task about option
+# parsing. The fix restricts the gated-call corroboration signal to files
+# SELECT matched *directly* (empty provenance); a gate inside a file only
+# reached transitively no longer corroborates a finding on its own.
+
+
+def test_gate_in_transitively_reached_file_produces_no_finding(tmp_path):
+    _write(
+        tmp_path / "src" / "compat.py",
+        "def is_ascii_encoding(encoding):\n    return encoding == 'ascii'\n\n"
+        "def get_best_encoding(stream):\n"
+        "    if is_ascii_encoding(stream.encoding):\n"
+        "        raise ValueError('ascii not supported')\n"
+        "    return stream.encoding\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_stream.py",
+        "def test_create_and_lookup():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    # compat.py was only reached by following an import edge from some
+    # other seed -- not matched by the task's own terms -- so it carries a
+    # non-empty provenance, unlike the _selected_items() helper's default.
+    items = [
+        ContextItem(
+            path="src/compat.py",
+            role="source",
+            reason="imported by core.py",
+            score=1.0,
+            provenance=["src/core.py imports src/compat.py"],
+        ),
+    ] + [
+        ContextItem(path=f.path, role=f.role, reason="test fixture", score=1.0)
+        for f in discovered
+        if f.role == "config"
+    ]
+
+    findings = find_test_reference_gaps(items, discovered, "option parsing drops the value after a flag")
+
+    assert not any("ascii" in f["term"] for f in findings), findings
+
+
+def test_gate_in_directly_matched_file_still_fires_even_for_transitive_symbol(tmp_path):
+    # The corroborating gate lives in a directly-matched (seed) file, even
+    # though the symbol it gates is defined in a file only reached
+    # transitively -- this is exactly the auth_bug shape (middleware.py,
+    # a seed, gates a call into session.py's is_session_expired) and must
+    # keep firing.
+    _write(
+        tmp_path / "src" / "session.py",
+        "def is_session_expired(session_id):\n    return True\n",
+    )
+    _write(
+        tmp_path / "src" / "middleware.py",
+        "def authenticate(store, session_id):\n"
+        "    if is_session_expired(session_id):\n"
+        "        raise ValueError('expired')\n"
+        "    return session_id\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_session.py",
+        "def test_create_and_lookup():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = [
+        ContextItem(
+            path="src/session.py",
+            role="source",
+            reason="imported by middleware.py",
+            score=1.0,
+            provenance=["src/middleware.py imports src/session.py"],
+        ),
+        ContextItem(
+            path="src/middleware.py",
+            role="source",
+            reason="filename matches 'authentication'",
+            score=10.0,
+            provenance=[],
+        ),
+    ]
+
+    findings = find_test_reference_gaps(items, discovered, "fix the authentication bug")
+
+    assert any("expir" in f["term"] for f in findings), findings
+
+
 # --- step 11: real-repo tuning ----------------------------------------------
 #
 # An earlier version of test_reference_gap turned every unreferenced
