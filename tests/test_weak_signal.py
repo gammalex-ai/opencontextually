@@ -82,8 +82,10 @@ def test_weak_signal_fires_on_filename_convention_only_match(tmp_path):
     assert package.weak_signal is not None
     assert "page" in package.weak_signal["matched_terms"]
     # Every task term is reported, including ones that matched nothing.
+    # "improve" is a generic task verb and is dropped as a stopword -- it
+    # describes intent, not code, so it is not a task term at all.
     assert set(package.weak_signal["term_file_counts"]) == {
-        "improve", "landing", "page", "conversion", "rate",
+        "landing", "page", "conversion", "rate",
     }
     assert package.weak_signal["term_file_counts"]["rate"] == 0
 

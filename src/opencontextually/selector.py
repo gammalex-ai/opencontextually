@@ -405,6 +405,15 @@ STOPWORDS = {
     "please", "need", "needs", "can", "should", "would", "could", "will",
     "file", "files", "code", "does", "doesn", "why", "how", "what",
     "into", "from", "there", "here", "some", "any", "all", "new", "old",
+    # Generic task verbs. A bug report's verb ("improve", "refactor",
+    # "investigate") describes the intent, never the code -- it matches
+    # incidental prose and dilutes the coverage signal that ranking and
+    # the weak-match warning both depend on. "fix"/"add"/"update" were
+    # already here; these are the rest of the same family.
+    "improve", "refactor", "implement", "handle", "support", "remove",
+    "change", "create", "build", "optimize", "cleanup", "investigate",
+    "debug", "broken", "wrong", "fails", "failing", "failed", "better",
+    "properly", "correctly", "instead", "still", "also", "then",
 }
 
 # --------------------------------------------------------------------------
