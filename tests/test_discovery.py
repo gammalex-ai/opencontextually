@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -181,6 +182,142 @@ def test_works_in_non_git_directory(tmp_path):
     found = _paths(discovered)
 
     assert "plain.py" in found
+
+
+def test_nested_gitignore_scoped_to_its_own_subtree(tmp_path):
+    # A nested .gitignore's patterns apply only under its own directory --
+    # a sibling directory with a same-named file is unaffected.
+    _write(tmp_path / "pkg_a" / ".gitignore", "local.txt\n")
+    _write(tmp_path / "pkg_a" / "local.txt", "ignored here")
+    _write(tmp_path / "pkg_b" / "local.txt", "not ignored here")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "pkg_a/local.txt" not in found
+    assert "pkg_b/local.txt" in found
+
+
+def test_nested_gitignore_overrides_root_gitignore(tmp_path):
+    # A deeper .gitignore takes precedence over a shallower one -- here a
+    # subdirectory re-includes (negates) a file the root .gitignore
+    # excludes, matching real `git check-ignore` behavior.
+    _write(tmp_path / ".gitignore", "keepme.txt\n")
+    _write(tmp_path / "sub" / ".gitignore", "!keepme.txt\n")
+    _write(tmp_path / "keepme.txt", "excluded at root")
+    _write(tmp_path / "sub" / "keepme.txt", "re-included by nested gitignore")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "keepme.txt" not in found
+    assert "sub/keepme.txt" in found
+
+
+def test_git_info_exclude_honored(tmp_path):
+    _write(tmp_path / ".git" / "info" / "exclude", "worktrees/\n")
+    _write(tmp_path / "worktrees" / "wt1" / "file.py", "print(1)")
+    _write(tmp_path / "real.py", "print(2)")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert not any(p.startswith("worktrees/") for p in found)
+    assert "real.py" in found
+    assert reasons["ignored"] == 1
+
+
+def test_root_gitignore_overrides_info_exclude(tmp_path):
+    # Verified against real `git check-ignore -v`: root .gitignore beats
+    # info/exclude regardless of which direction (exclude vs negate) each
+    # one goes.
+    _write(tmp_path / ".git" / "info" / "exclude", "!decided.txt\n")
+    _write(tmp_path / ".gitignore", "decided.txt\n")
+    _write(tmp_path / "decided.txt", "content")
+
+    discovered, reasons = discover(tmp_path)
+    assert "decided.txt" not in _paths(discovered)
+
+
+def test_global_excludes_file_honored(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    global_ignore = home / "gitignore_global"
+    global_ignore.write_text("*.globalskip\n")
+
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    project = tmp_path / "project"
+    _write(project / ".git" / "config", f"[core]\n\texcludesFile = {global_ignore}\n")
+    _write(project / "drop.globalskip", "should be excluded")
+    _write(project / "keep.txt", "should remain")
+
+    discovered, reasons = discover(project)
+    found = _paths(discovered)
+
+    assert "drop.globalskip" not in found
+    assert "keep.txt" in found
+    assert reasons["ignored"] == 1
+
+
+def test_global_excludes_file_from_xdg_git_config(tmp_path, monkeypatch):
+    # core.excludesFile resolved via $XDG_CONFIG_HOME/git/config when
+    # there is no repo-local or ~/.gitconfig setting.
+    home = tmp_path / "home"
+    home.mkdir()
+    xdg = tmp_path / "xdgconfig"
+    (xdg / "git").mkdir(parents=True)
+    global_ignore = xdg / "my_global_ignore"
+    global_ignore.write_text("*.xdgskip\n")
+    (xdg / "git" / "config").write_text(f"[core]\nexcludesfile={global_ignore}\n")
+
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    project = tmp_path / "project"
+    _write(project / "drop.xdgskip", "should be excluded")
+    _write(project / "keep.txt", "should remain")
+
+    discovered, reasons = discover(project)
+    found = _paths(discovered)
+
+    assert "drop.xdgskip" not in found
+    assert "keep.txt" in found
+
+
+def test_info_exclude_negation_overrides_global_excludes(tmp_path, monkeypatch):
+    # Verified against real `git check-ignore -v`: info/exclude beats the
+    # global excludes file, in either direction.
+    home = tmp_path / "home"
+    home.mkdir()
+    global_ignore = home / "global_ignore"
+    global_ignore.write_text("reinclude.txt\n")
+
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    project = tmp_path / "project"
+    _write(project / ".git" / "config", f"[core]\nexcludesFile = {global_ignore}\n")
+    _write(project / ".git" / "info" / "exclude", "!reinclude.txt\n")
+    _write(project / "reinclude.txt", "content")
+
+    discovered, reasons = discover(project)
+    assert "reinclude.txt" in _paths(discovered)
+
+
+def test_gitignore_negation_still_works_at_root(tmp_path):
+    # Regression guard: the new multi-source combining logic must not
+    # break ordinary single-file negation.
+    _write(tmp_path / ".gitignore", "*.log\n!important.log\n")
+    _write(tmp_path / "a.log", "drop")
+    _write(tmp_path / "important.log", "keep")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "a.log" not in found
+    assert "important.log" in found
 
 
 def test_role_classification(tmp_path):

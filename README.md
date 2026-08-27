@@ -95,9 +95,13 @@ same content as JSON (also available via `octx --json`).
   not a coverage claim. Both are intentionally high-precision and
   low-recall: when a match isn't clear, they say nothing rather than risk
   a false positive.
-- **Only the root-level `.gitignore` (plus an optional
-  `.opencontextuallyignore`) is honored.** Nested `.gitignore` files in
-  subdirectories are out of scope for v0.1.
+- **Ignore rules match git's own.** Discovery honors every source git
+  does — nested `.gitignore` files (scoped to their own subtree, with
+  deeper rules overriding shallower ones), repo-local
+  `.git/info/exclude`, and the global `core.excludesFile` — plus an
+  optional `.opencontextuallyignore`. Resolved without shelling out to
+  git, so this also works in a directory that isn't a git repository at
+  all.
 - **Redaction is lexical, not semantic.** Excerpts mask values on
   key-shaped secrets (`key`, `token`, `secret`, `password`, `api_key`, and
   similar) and standalone high-entropy strings. A secret that doesn't look
