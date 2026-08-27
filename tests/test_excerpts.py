@@ -346,13 +346,18 @@ def test_redact_masks_pem_private_key_block():
 
 
 def test_env_secret_never_appears_anywhere_in_serialized_package(tmp_path):
+    # Both keys deliberately carry "database" so the key-name assertion
+    # below is anchored to .env's own config-key excerpt span rather than
+    # to an incidental match in some other, lower-scoring file -- see the
+    # distinct-term-coverage fix in selector.py, which (correctly) can
+    # drop a file that only matches one of a multi-term task's terms.
     secret_value = "zzsupersecretvalue1234567890abcdefzz"
     (tmp_path / ".env").write_text(
         "DATABASE_URL=postgres://localhost/appdb\n"
-        f"API_SECRET_KEY={secret_value}\n"
+        f"DATABASE_SECRET_KEY={secret_value}\n"
     )
     (tmp_path / "app.py").write_text(
-        "# reads DATABASE_URL and API_SECRET_KEY from the environment\n"
+        "# reads DATABASE_URL and DATABASE_SECRET_KEY from the environment\n"
         "import os\n"
         "DATABASE_URL = os.environ['DATABASE_URL']\n"
     )
@@ -364,4 +369,4 @@ def test_env_secret_never_appears_anywhere_in_serialized_package(tmp_path):
 
     serialized = json.dumps(package.to_dict())
     assert secret_value not in serialized
-    assert "API_SECRET_KEY" in serialized
+    assert "DATABASE_SECRET_KEY" in serialized

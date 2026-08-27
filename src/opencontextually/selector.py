@@ -128,6 +128,74 @@ _GENERATED_MARKERS = (
 GENERATED_FILE_PENALTY = 0.15
 _GENERATED_SNIFF_CHARS = 4096
 
+# --- bug fix: frequency rewarded, distinct-term coverage ignored ---
+# A file that repeats one incidental task term many times ("mobile" as a
+# CSS breakpoint value, 21 times; "navigation" as a homonym import from
+# next/navigation) could out-rank nothing on its own -- content_score is
+# capped at CONTENT_CAP -- but it still cleared SCORE_THRESHOLD and
+# consumed one of MAX_SEEDS/MAX_INCLUDED's limited slots, crowding out nothing
+# in particular but adding pure noise to the package. Observed on a real
+# TypeScript repo (task "navigation dropdown is broken on mobile", 4 terms):
+# ranks 4-8 of an 8-result package each matched exactly one of the four
+# terms, while ranks 1-3 (the actually relevant files) each matched three.
+# Observed again on ~/Dali: four files tied at an identical score, three of
+# them tests matching only "citation" via a shared import, with excerpts
+# ("test_empty_names_returns_empty") that have nothing to do with the task.
+#
+# A file matching several *distinct* task terms is categorically more
+# likely to be relevant than one matching a single term many times -- that
+# is the signal frequency-based scoring cannot see on its own.
+# COVERAGE_EXPONENT makes coverage a real multiplier, not a small tiebreak:
+# at exponent 1 (linear in coverage_ratio), a file matching 1 of 4 terms
+# keeps only 25% of its symbol/content score against 75% for a 3-of-4
+# match -- already a 3x spread, and content_score's own CONTENT_CAP means
+# raw repetition (21x, 40x, ...) was never more than a fixed 6.0 to begin
+# with, so linear coverage on top of that cap is already enough to push a
+# single-term repeater below SCORE_THRESHOLD on a multi-term task (verified
+# below and in test_coverage.py).
+#
+# A steeper exponent (2, 3, ...) was tried first and rejected after real-
+# repo testing (fastapi): symbol_score has no equivalent cap, so a file
+# that legitimately *defines* many symbols named after a single task term
+# -- fastapi/dependencies/utils.py, which defines a dozen-plus functions
+# with "dependency" in the name, for the task "dependency override not
+# applied in nested routers" -- accumulates a large uncapped symbol_score
+# from one term. That is exactly the file a developer fixing the bug would
+# open, but it does not literally say "override", "nested", or "routers"
+# anywhere. At exponent 2 its score dropped from 18.0 to 0.72 (below
+# threshold, wrongly excluded); at exponent 1 it drops to 3.60 (still
+# comfortably above threshold) while the two confirmed-noise files from
+# the TypeScript case above still fall from ~6.0-content-cap to ~1.4
+# (still below threshold). Exponent 1 is the value that satisfies both
+# real-repo observations at once; a future tuning pass could instead cap
+# symbol_score the way CONTENT_CAP already caps content_score, which would
+# likely tolerate a steeper exponent without this tension.
+#
+# Two things this deliberately does NOT touch, both load-bearing:
+#
+#   1. filename_score is excluded from the coverage multiplier entirely.
+#      `lib/navigation.ts` matching only the "navigation" term in its own
+#      filename is still exactly the kind of direct, deliberate signal
+#      WEIGHT_FILENAME exists to reward -- coverage is a signal about
+#      *content* repetition vs. breadth, and a filename match is neither.
+#      Scaling it down would re-break the auth_bug fixture's own
+#      single-term-per-file filename matches.
+#
+#   2. Coverage is computed as (distinct matched terms) / (terms in the
+#      task), so a single-word task ("applications") always has
+#      coverage_ratio == 1.0 for any file that matches at all -- there is
+#      only one term to cover. Multi-term tasks are the only ones where
+#      the ratio can fall below 1.0. Verified explicitly in
+#      test_coverage.py and against a real single-term CLI run.
+#
+# Transitively-reached files (expand_transitively) never call _analyze at
+# all -- their score is the seed's score decayed by IMPORT_DECAY per hop,
+# not a fresh lexical analysis. Coverage therefore cannot penalize them:
+# dali/scoring/existence.py, reached only via import with zero lexical
+# match of its own, is untouched by this change. Verified explicitly in
+# test_coverage.py and against ~/Dali.
+COVERAGE_EXPONENT = 1.0
+
 # --- transitive import expansion (step 5) ---
 # First-party Python import graph, walked in both directions from the seed
 # set: files a seed imports, and files that import a seed. Bounded by
@@ -547,6 +615,7 @@ def _analyze(
     # signal (e.g. a class's own `def is_expired` method) that a top-level-
     # only scan would silently miss.
     symbol_names: list[str] = []
+    symbol_terms: set[str] = set()
     if discovered_file.path.endswith(".py") and content:
         record = cache.get_record(discovered_file)
         for node in record.defs:
@@ -556,6 +625,7 @@ def _analyze(
                     symbol_score += WEIGHT_SYMBOL
                     matched_any = True
                     node_matched = True
+                    symbol_terms.add(t)
             if node_matched:
                 symbol_names.append(node.name)
 
@@ -592,6 +662,24 @@ def _analyze(
     # --- role bonus ---
     if matched_any and discovered_file.role in ROLE_BONUS_ROLES:
         role_bonus = ROLE_BONUS
+
+    # --- distinct-term coverage ---
+    # See COVERAGE_EXPONENT above for the full rationale. Scaled here are
+    # only symbol_score and content_score -- the two components that scale
+    # with how many times a file *mentions* a term, the same repetition-
+    # sensitive pair TEST_SIGNAL_DAMPING already singles out above.
+    # filename_score is left untouched for the reasons given there.
+    # role_bonus is also left untouched: it is a small, flat nudge for a
+    # config/docs file that matched *anything*, not a repetition artifact,
+    # and scaling it down punished the legitimate case of a short config
+    # file (e.g. a two-line .env) that has only one task term to match in
+    # the first place -- observed while adding this fix, against
+    # test_env_secret_never_appears_anywhere_in_serialized_package.
+    distinct_matched_terms = set(filename_terms) | symbol_terms | set(content_term_counts)
+    coverage_ratio = (len(distinct_matched_terms) / len(terms)) if terms else 1.0
+    coverage_factor = coverage_ratio ** COVERAGE_EXPONENT
+    symbol_score *= coverage_factor
+    content_score *= coverage_factor
 
     score = filename_score + symbol_score + content_score + role_bonus
 
