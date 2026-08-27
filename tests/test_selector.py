@@ -188,8 +188,12 @@ def test_large_file_content_frequency_is_damped(tmp_path):
 def test_select_caps_at_max_seeds(tmp_path):
     from opencontextually.selector import MAX_SEEDS
 
+    # Distinct content per file -- this test is about the MAX_SEEDS cap,
+    # not duplicate collapsing (see test_bugfixes.py for that), so each
+    # file must be byte-distinct or discovery's duplicate collapsing would
+    # drop all but one before select() ever sees them.
     for i in range(MAX_SEEDS + 5):
-        _write(tmp_path / f"auth_{i}.py", "# auth file\n")
+        _write(tmp_path / f"auth_{i}.py", f"# auth file {i}\n")
 
     discovered, _reasons = discover(tmp_path)
     items, extra = select(discovered, "fix the auth bug")

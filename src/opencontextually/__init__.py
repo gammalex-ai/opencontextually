@@ -84,7 +84,9 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     excluded_by_reason["over_budget"] = excluded_by_reason.get("over_budget", 0) + len(fully_evicted)
     # Every run reports the full bucket set, even when a bucket is zero,
     # so the exclusion summary is always the same six keys.
-    for key in ("ignored", "binary", "oversize", "below_threshold", "over_cap", "over_budget"):
+    for key in (
+        "ignored", "binary", "oversize", "duplicate", "below_threshold", "over_cap", "over_budget",
+    ):
         excluded_by_reason.setdefault(key, 0)
     excluded_count = sum(excluded_by_reason.values())
 

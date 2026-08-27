@@ -320,6 +320,62 @@ def test_gitignore_negation_still_works_at_root(tmp_path):
     assert "important.log" in found
 
 
+def test_duplicate_files_collapse_to_shallower_non_vendor_path(tmp_path):
+    content = "export function Applications() { return null; }\n"
+    _write(tmp_path / "src" / "components" / "Applications.tsx", content)
+    _write(tmp_path / ".claude" / "worktrees" / "wt1" / "src" / "components" / "Applications.tsx", content)
+    _write(tmp_path / ".claude" / "worktrees" / "wt2" / "src" / "components" / "Applications.tsx", content)
+
+    discovered, reasons = discover(tmp_path)
+    found = {f.path: f for f in discovered}
+
+    assert "src/components/Applications.tsx" in found
+    assert ".claude/worktrees/wt1/src/components/Applications.tsx" not in found
+    assert ".claude/worktrees/wt2/src/components/Applications.tsx" not in found
+    assert reasons["duplicate"] == 2
+    assert found["src/components/Applications.tsx"].duplicate_count == 2
+
+
+def test_duplicate_prefers_shallower_path_over_deeper_non_vendor_path(tmp_path):
+    content = "same content\n"
+    _write(tmp_path / "a" / "b" / "c" / "note.txt", content)
+    _write(tmp_path / "note.txt", content)
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "note.txt" in found
+    assert "a/b/c/note.txt" not in found
+    assert reasons["duplicate"] == 1
+
+
+def test_near_identical_files_are_both_kept(tmp_path):
+    _write(tmp_path / "one.txt", "hello world\n")
+    _write(tmp_path / "two.txt", "hello world!\n")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "one.txt" in found
+    assert "two.txt" in found
+    assert reasons["duplicate"] == 0
+
+
+def test_empty_files_are_not_treated_as_duplicates(tmp_path):
+    # Every empty file is trivially "byte-identical" -- collapsing them
+    # would silently drop unrelated empty files (e.g. multiple package
+    # __init__.py) that just happen to have no content yet.
+    _write(tmp_path / "pkg_a" / "__init__.py", "")
+    _write(tmp_path / "pkg_b" / "__init__.py", "")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "pkg_a/__init__.py" in found
+    assert "pkg_b/__init__.py" in found
+    assert reasons["duplicate"] == 0
+
+
 def test_role_classification(tmp_path):
     _write(tmp_path / "src" / "app.py", "def f(): pass")
     _write(tmp_path / "tests" / "test_app.py", "def test_f(): pass")

@@ -48,7 +48,7 @@ Missing (2):
      referenced in src/users/session.py:67
 
 Excluded: 20 unrelated files
-  below_threshold=20, binary=0, ignored=0, over_budget=0, over_cap=0, oversize=0
+  below_threshold=20, binary=0, duplicate=0, ignored=0, over_budget=0, over_cap=0, oversize=0
 
 Checks run: configuration_discrepancy, test_reference_gap
 ```

@@ -589,6 +589,13 @@ def _analyze(
         score *= EXAMPLE_PATH_PENALTY
 
     reason = _build_reason(discovered_file.role, filename_terms, symbol_names, content_term_counts)
+    if discovered_file.duplicate_count > 0:
+        # Never let a collapsed duplicate be silent -- see
+        # discovery._dedupe_by_content(). The dropped count is also
+        # recorded in excluded_by_reason["duplicate"]; this is the
+        # per-item explanation of *why* this representative was kept.
+        copy_word = "copy" if discovered_file.duplicate_count == 1 else "copies"
+        reason = f"{reason} ({discovered_file.duplicate_count} duplicate {copy_word} collapsed)"
     return score, reason
 
 

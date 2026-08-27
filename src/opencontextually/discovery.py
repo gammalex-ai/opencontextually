@@ -9,6 +9,7 @@ are worth considering at all?"
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -50,6 +51,14 @@ _SOURCE_EXTENSIONS = {
 REASON_IGNORED = "ignored"
 REASON_BINARY = "binary"
 REASON_OVERSIZE = "oversize"
+REASON_DUPLICATE = "duplicate"
+
+# Directories that hold vendored/tooling output rather than something a
+# developer would open and edit -- when several byte-identical copies of a
+# file exist (a vendored dependency, a worktree, a build artifact), a copy
+# under one of these is the last choice for the kept representative even if
+# it happens to be the shallowest path. See _dedupe_by_content().
+DUPLICATE_TOOLING_DIR_SEGMENTS = {".claude", "vendor", "third_party", "build", "dist"}
 
 
 @dataclass
@@ -60,6 +69,12 @@ class DiscoveredFile:
     abs_path: Path
     role: str  # "source" | "test" | "config" | "docs" | "other"
     size: int
+    # Number of byte-identical copies of this file that were dropped in
+    # its favor by _dedupe_by_content() -- 0 for a file with no known
+    # duplicates, or for a duplicate that was itself dropped (it never
+    # reaches the returned list). Surfaced in the kept item's reason by
+    # selector.py so a collapsed duplicate is never silent.
+    duplicate_count: int = 0
 
 
 # --------------------------------------------------------------------------
@@ -320,6 +335,104 @@ def _count_files_recursive(dir_abs: Path, root: Path) -> int:
     return count
 
 
+# --------------------------------------------------------------------------
+# Byte-identical duplicate collapsing.
+#
+# A repo containing several copies of the same file (a vendored dependency,
+# a git worktree, a build artifact, a backup directory) would otherwise
+# have every copy scored and surfaced independently, crowding out distinct
+# results with repeats of the same content. Hashing is bounded to actual
+# collision candidates: files are first grouped by size (byte-identical
+# files necessarily share a size), and only a size group with more than
+# one member -- and never the common size-0 group, where "byte-identical"
+# is true of every empty file in the repo and not a meaningful signal --
+# is actually read and hashed. Most files in a real repo have a size no
+# other file shares, so this reads far fewer files than a full-repo hash
+# pass would.
+# --------------------------------------------------------------------------
+
+
+def _hash_file_contents(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 16), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _is_tooling_or_vendor_path(rel_path: str) -> bool:
+    dir_parts = rel_path.split("/")[:-1]
+    return any(part in DUPLICATE_TOOLING_DIR_SEGMENTS for part in dir_parts)
+
+
+def _pick_representative(files: list[DiscoveredFile]) -> DiscoveredFile:
+    """Of several byte-identical files, choose the one a developer would
+    actually edit: prefer a path outside a tooling/vendor-ish directory
+    (DUPLICATE_TOOLING_DIR_SEGMENTS) over one inside such a directory, then
+    the shallowest path, then alphabetical for determinism -- never
+    arbitrary discovery order.
+    """
+    return sorted(
+        files,
+        key=lambda f: (
+            1 if _is_tooling_or_vendor_path(f.path) else 0,
+            f.path.count("/"),
+            f.path,
+        ),
+    )[0]
+
+
+def _dedupe_by_content(discovered: list[DiscoveredFile]) -> tuple[list[DiscoveredFile], int]:
+    """Collapse groups of byte-identical files down to one representative
+    each (see _pick_representative). Returns (deduplicated files, count of
+    duplicate copies dropped). The kept representative's `duplicate_count`
+    is set to the number of copies collapsed into it, so the drop is never
+    silent -- selector.py surfaces it in the item's reason.
+    """
+    by_size: dict[int, list[DiscoveredFile]] = {}
+    for f in discovered:
+        by_size.setdefault(f.size, []).append(f)
+
+    drop_paths: set[str] = set()
+    duplicate_counts: dict[str, int] = {}
+
+    for size, group in by_size.items():
+        if size == 0 or len(group) < 2:
+            continue
+
+        by_hash: dict[str, list[DiscoveredFile]] = {}
+        for f in group:
+            digest = _hash_file_contents(f.abs_path)
+            if digest is None:
+                continue
+            by_hash.setdefault(digest, []).append(f)
+
+        for files in by_hash.values():
+            if len(files) < 2:
+                continue
+            representative = _pick_representative(files)
+            duplicates = [f for f in files if f is not representative]
+            for dup in duplicates:
+                drop_paths.add(dup.path)
+            duplicate_counts[representative.path] = len(duplicates)
+
+    if not drop_paths:
+        return discovered, 0
+
+    kept: list[DiscoveredFile] = []
+    for f in discovered:
+        if f.path in drop_paths:
+            continue
+        if f.path in duplicate_counts:
+            f.duplicate_count = duplicate_counts[f.path]
+        kept.append(f)
+
+    return kept, len(drop_paths)
+
+
 def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
     """Walk `root` and return (discovered files, exclusion reason counts).
 
@@ -332,7 +445,8 @@ def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
     do not exist simply contribute no patterns. Excludes only the narrow
     DENYLIST_DIRS, plus binaries and oversize files.
 
-    Exclusion reason bucket keys are exactly: "ignored", "binary", "oversize".
+    Exclusion reason bucket keys are exactly: "ignored", "binary",
+    "oversize", "duplicate".
     """
     root = root.resolve()
     root_spec = _load_root_spec(root)
@@ -344,7 +458,12 @@ def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
     nested_specs: dict[str, pathspec.PathSpec] = {}
 
     discovered: list[DiscoveredFile] = []
-    reasons: dict[str, int] = {REASON_IGNORED: 0, REASON_BINARY: 0, REASON_OVERSIZE: 0}
+    reasons: dict[str, int] = {
+        REASON_IGNORED: 0,
+        REASON_BINARY: 0,
+        REASON_OVERSIZE: 0,
+        REASON_DUPLICATE: 0,
+    }
 
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dir_abs = Path(dirpath)
@@ -414,5 +533,8 @@ def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
                     size=size,
                 )
             )
+
+    discovered, duplicate_count = _dedupe_by_content(discovered)
+    reasons[REASON_DUPLICATE] = duplicate_count
 
     return discovered, reasons
