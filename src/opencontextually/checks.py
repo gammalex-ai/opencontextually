@@ -249,27 +249,179 @@ def _key_tokens(key: str) -> set[str]:
     return {t.lower() for t in _TOKEN_SPLIT_RE.split(key) if t}
 
 
-def _extract_line_value(line: str) -> tuple[str, float, str] | None:
-    """Return (kind, normalized_seconds_or_number, raw_matched_text) for
-    the first value assertion on `line`, or None. A duration is only
-    recognized when the line spells out a unit explicitly ("30 minutes",
-    "1800s") -- a bare number with no unit is reported as an untyped
-    "number" and only ever compared against another untyped config value,
-    never guessed into a duration. Guessing there would trade precision
-    for recall, which this rule is not willing to do.
+def _extract_line_value(line: str) -> tuple[str, float, str, int] | None:
+    """Return (kind, normalized_seconds_or_number, raw_matched_text,
+    match_start) for the first value assertion on `line`, or None. A
+    duration is only recognized when the line spells out a unit explicitly
+    ("30 minutes", "1800s") -- a bare number with no unit is reported as an
+    untyped "number" and only ever compared against another untyped config
+    value, never guessed into a duration. Guessing there would trade
+    precision for recall, which this rule is not willing to do.
+
+    `match_start` is the character offset of the match within `line`, used
+    by the caller to check whether the match falls inside an inline code
+    span (single backticks) -- see _collect_doc_assertions.
     """
     duration_match = _DURATION_RE.search(line)
     if duration_match:
         unit = duration_match.group("unit").lower()
         factor = _UNIT_SECONDS.get(unit)
         if factor is not None:
-            return "duration", float(duration_match.group("num")) * factor, duration_match.group(0)
+            return (
+                "duration",
+                float(duration_match.group("num")) * factor,
+                duration_match.group(0),
+                duration_match.start(),
+            )
 
     number_match = _NUMBER_RE.search(line)
     if number_match:
-        return "number", float(number_match.group("num")), number_match.group(0)
+        return "number", float(number_match.group("num")), number_match.group(0), number_match.start()
 
     return None
+
+
+# --------------------------------------------------------------------------
+# Bug fix: doc code examples misread as configuration requirements.
+#
+# A doc line that only *demonstrates* a value -- inside a fenced code block,
+# an rst `.. code-block::`/`.. sourcecode::` directive, an rst `::` literal
+# block, or an inline code span -- is not the docs asserting a requirement.
+# Observed on a real repo (sqlfluff): a `.. code-block:: sql` tutorial
+# showing how to *override* the default `tab_space_size` for a single file
+# ("-- Set a smaller indent for this file") was read as the docs declaring
+# the project-wide default should be 2, producing a false-positive conflict
+# against the real default of 4. The project's own stated bar is that any
+# false-positive configuration_discrepancy is a bug, so doc lines inside a
+# code example are excluded from consideration entirely -- never turned
+# into a doc assertion in the first place. This is a lexical, line-based
+# exclusion (mirroring the rest of this module's lexical approach), not a
+# real Markdown/rst parser: it is deliberately conservative, erring toward
+# excluding a line that might be prose over including one that is actually
+# code.
+# --------------------------------------------------------------------------
+
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
+_RST_DIRECTIVE_RE = re.compile(r"^\s*\.\.\s+(code-block|sourcecode)::")
+_INLINE_CODE_SPAN_RE = re.compile(r"`[^`\n]+`")
+
+
+def _indent_of(line: str) -> int:
+    expanded = line.expandtabs(4)
+    return len(expanded) - len(expanded.lstrip(" "))
+
+
+def _fenced_code_line_mask(lines: list[str]) -> set[int]:
+    """1-indexed line numbers inside a Markdown-style fenced code block
+    (``` or ~~~), including the fence lines themselves. Works for any text
+    file that happens to use fences, not just `.md`.
+    """
+    code_lines: set[int] = set()
+    fence_char: str | None = None
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        match = _FENCE_RE.match(stripped)
+        if match:
+            marker = match.group(1)[0]
+            if fence_char is None:
+                fence_char = marker
+                code_lines.add(idx)
+                continue
+            if marker == fence_char:
+                fence_char = None
+                code_lines.add(idx)
+                continue
+        if fence_char is not None:
+            code_lines.add(idx)
+    return code_lines
+
+
+def _indented_markdown_block_mask(lines: list[str]) -> set[int]:
+    """1-indexed line numbers of Markdown-style indented (4+ space) code
+    blocks: a non-blank line indented >=4 spaces, immediately preceded by a
+    blank line or another such indented line. A crude approximation of
+    CommonMark's indented-code-block rule -- it does not special-case list
+    items, which means some genuinely-indented list prose is also excluded,
+    an acceptable false negative given this rule's precision-over-recall
+    posture.
+    """
+    code_lines: set[int] = set()
+    prev_blank_or_code = True
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            prev_blank_or_code = True
+            continue
+        if prev_blank_or_code and _indent_of(line) >= 4:
+            code_lines.add(idx)
+            prev_blank_or_code = True
+        else:
+            prev_blank_or_code = False
+    return code_lines
+
+
+def _rst_code_line_mask(lines: list[str]) -> set[int]:
+    """1-indexed line numbers inside an rst `.. code-block::`/
+    `.. sourcecode::` directive body, or an rst `::` literal-block body --
+    any block of lines indented deeper than the line that introduced it,
+    running until the indentation returns to (or below) the introducing
+    line's own indentation.
+    """
+    code_lines: set[int] = set()
+    n = len(lines)
+    i = 0
+    while i < n:
+        line = lines[i]
+        stripped = line.strip()
+        is_directive = bool(_RST_DIRECTIVE_RE.match(line))
+        # A paragraph/marker line ending in "::" introduces an rst literal
+        # block (e.g. "Some examples are shown below::", or a bare "::").
+        # Excludes the directive itself, which is handled by is_directive.
+        is_literal_marker = (not is_directive) and stripped.endswith("::")
+
+        if not (is_directive or is_literal_marker):
+            i += 1
+            continue
+
+        trigger_indent = _indent_of(line)
+        j = i + 1
+        while j < n and lines[j].strip() == "":
+            j += 1
+        if j < n and _indent_of(lines[j]) > trigger_indent:
+            while j < n:
+                if lines[j].strip() == "":
+                    j += 1
+                    continue
+                if _indent_of(lines[j]) <= trigger_indent:
+                    break
+                code_lines.add(j + 1)
+                j += 1
+        i = j if j > i else i + 1
+    return code_lines
+
+
+def _doc_code_line_mask(content: str, lines: list[str]) -> set[int]:
+    """Union of every code-context detector above, for one doc file's
+    lines. Extension-agnostic (fences and rst directives are each checked
+    unconditionally) since real-world docs mix conventions.
+    """
+    mask = _fenced_code_line_mask(lines)
+    mask |= _indented_markdown_block_mask(lines)
+    mask |= _rst_code_line_mask(lines)
+    return mask
+
+
+def _in_inline_code_span(line: str, start: int) -> bool:
+    """True if character offset `start` in `line` falls inside a single-
+    backtick inline code span. Inline code is weaker evidence of a genuine
+    requirement than plain prose (it is often used for a config key name
+    or an example value), so a value found only inside one is not treated
+    as a doc assertion.
+    """
+    for match in _INLINE_CODE_SPAN_RE.finditer(line):
+        if match.start() <= start < match.end():
+            return True
+    return False
 
 
 def _collect_doc_assertions(doc_files: list[DiscoveredFile]) -> list[dict]:
@@ -279,11 +431,17 @@ def _collect_doc_assertions(doc_files: list[DiscoveredFile]) -> list[dict]:
             content = doc_file.abs_path.read_text(errors="replace")
         except OSError:
             continue
-        for lineno, line in enumerate(content.splitlines(), start=1):
+        lines = content.splitlines()
+        code_line_mask = _doc_code_line_mask(content, lines)
+        for lineno, line in enumerate(lines, start=1):
+            if lineno in code_line_mask:
+                continue
             extracted = _extract_line_value(line)
             if extracted is None:
                 continue
-            kind, normalized, raw = extracted
+            kind, normalized, raw, start = extracted
+            if _in_inline_code_span(line, start):
+                continue
             tokens = _key_tokens(line)
             assertions.append(
                 {

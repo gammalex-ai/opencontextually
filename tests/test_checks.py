@@ -62,6 +62,99 @@ def test_detects_mismatched_duration_with_nested_yaml_key(tmp_path):
     assert "30" in finding["doc"]["value"]
 
 
+# --- negative: doc code examples are not requirements -----------------------
+#
+# A value that only appears inside a doc's code example -- fenced Markdown,
+# an rst code-block/sourcecode directive, or an rst `::` literal block --
+# demonstrates something (often how to *override* a default) rather than
+# asserting a project-wide requirement. See the "Bug fix: doc code examples
+# misread as configuration requirements" note in checks.py.
+
+
+def test_fenced_markdown_code_block_ignored(tmp_path):
+    _write(
+        tmp_path / "config" / "auth.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "docs" / "security.md",
+        "# Security\n\n"
+        "Override the session timeout per-deployment like this:\n\n"
+        "```yaml\n"
+        "session:\n"
+        "  timeout_minutes: 30\n"
+        "```\n",
+    )
+
+    findings = find_configuration_discrepancies(_discover(tmp_path))
+    assert findings == []
+
+
+def test_rst_code_block_directive_ignored(tmp_path):
+    _write(
+        tmp_path / "config" / "auth.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "docs" / "security.rst",
+        "Security\n========\n\n"
+        "A few common examples are shown below:\n\n"
+        ".. code-block:: sql\n\n"
+        "    -- Set a smaller indent for this file\n"
+        "    -- sqlfluff:session:timeout_minutes:30\n\n"
+        "We recommend the default for most projects.\n",
+    )
+
+    findings = find_configuration_discrepancies(_discover(tmp_path))
+    assert findings == []
+
+
+def test_rst_literal_block_ignored(tmp_path):
+    _write(
+        tmp_path / "config" / "auth.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "docs" / "security.rst",
+        "Security\n========\n\n"
+        "Example configuration::\n\n"
+        "    session:\n"
+        "      timeout_minutes: 30\n\n"
+        "This is only an example, not the default.\n",
+    )
+
+    findings = find_configuration_discrepancies(_discover(tmp_path))
+    assert findings == []
+
+
+def test_genuine_prose_assertion_still_detected_alongside_code_example(tmp_path):
+    # A doc that contains BOTH a code example and a genuine prose assertion
+    # must still detect the real conflict from the prose line -- the fix
+    # excludes code contexts, not the whole file.
+    _write(
+        tmp_path / "config" / "auth.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "docs" / "security.md",
+        "# Security\n\n"
+        "- Session timeout: 30 minutes.\n\n"
+        "Example override:\n\n"
+        "```yaml\n"
+        "session:\n"
+        "  timeout_minutes: 45\n"
+        "```\n",
+    )
+
+    findings = find_configuration_discrepancies(_discover(tmp_path))
+    matches = [f for f in findings if f["rule"] == "configuration_discrepancy"]
+    assert matches, findings
+    finding = matches[0]
+    assert finding["doc"]["path"] == "docs/security.md"
+    assert finding["doc"]["line"] == 3
+    assert "30" in finding["doc"]["value"]
+
+
 # --- negative: same value on both sides -> no finding ----------------------
 
 
