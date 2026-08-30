@@ -42,6 +42,42 @@ VERBOSE_EXCERPT_BUDGET = 9
 # crowded out in a narrow terminal.
 MAX_PATH_COLUMN = 48
 
+# --- bug fix: reasons truncated into uselessness -------------------------
+#
+# The path column used to claim whatever width the longest shown path
+# needed (up to MAX_PATH_COLUMN), and the reason got whatever was left --
+# which, in a narrow terminal with a long path (e.g.
+# ".github/ISSUE_TEMPLATE/bug_report.yml", 38 chars), could be as little
+# as ~15 usable characters before the trailing "...". Truncation to "..."
+# with no real content is never acceptable: a reason exists to be read.
+#
+# The fix budgets columns the other way around: the reason is guaranteed
+# at least MIN_REASON_WIDTH characters first, and the path column shrinks
+# to make room for that -- down to MIN_PATH_WIDTH, below which a path is
+# no longer identifiable even abbreviated. A shrunk path is middle-elided
+# (see _elide_path_middle()) rather than truncated from the right, so the
+# basename -- the most identifying part of a path -- always survives; only
+# the middle directory segments are dropped. When the terminal is too
+# narrow for even MIN_PATH_WIDTH + MIN_REASON_WIDTH to fit side by side,
+# the layout gives up on sharing one line at all: the path prints on its
+# own line and the reason wraps onto a second, indented line with (nearly)
+# the whole terminal width to itself, per _column_layout()'s `wrap` flag.
+INDENT_WIDTH = 2
+GUTTER_WIDTH = 2
+WRAP_INDENT_WIDTH = 4
+MIN_REASON_WIDTH = 28
+MIN_PATH_WIDTH = 16
+
+_INDENT = " " * INDENT_WIDTH
+_GUTTER = " " * GUTTER_WIDTH
+_WRAP_INDENT = " " * WRAP_INDENT_WIDTH
+
+# The middle-elision marker used by _elide_path_middle(). Plain ASCII
+# (not the Unicode/ASCII glyph pair used elsewhere) since it sits inside a
+# file path, which callers may copy-paste or grep -- an ellipsis character
+# there is one more thing that could fail to round-trip.
+_PATH_ELIDE_MARKER = ".../"
+
 
 @dataclass
 class Excerpt:
@@ -104,7 +140,7 @@ class ContextPackage:
     #   }
     weak_signal: dict | None = None
 
-    def render(self, verbose: bool = False, show_all: bool = False) -> str:
+    def render(self, verbose: bool = False, show_all: bool = False, width: int | None = None) -> str:
         """Plain-text rendering for humans.
 
         Default: one line per included file (path, reason, and a "via"
@@ -116,6 +152,13 @@ class ContextPackage:
         item (today's excerpt content, presented much smaller).
 
         show_all=True: list every included item instead of the top slice.
+
+        width: override the terminal width used for column budgeting
+        (see _column_layout()). Defaults to _terminal_width() -- this
+        parameter exists so tests (and any other caller that wants a
+        fixed-width render) do not have to monkeypatch shutil or the
+        COLUMNS environment variable to exercise a specific width; it is
+        the seam the plan asks _terminal_width() to provide.
 
         This and to_dict() are the only places in the codebase that format
         a package for output.
@@ -140,13 +183,11 @@ class ContextPackage:
                 lines.append("Showing weak matches anyway:")
                 lines.append("")
 
-            path_width = min(
-                max(len(item.path) for item in shown), MAX_PATH_COLUMN
-            )
-            term_width = self._terminal_width()
+            term_width = width if width is not None else self._terminal_width()
+            layout = _column_layout(shown, term_width)
 
             for item in shown:
-                lines.append(self._render_item_line(item, path_width, term_width, glyphs))
+                lines.extend(self._render_item_lines(item, layout, glyphs))
                 if verbose:
                     lines.extend(self._render_verbose_excerpts(item))
 
@@ -175,17 +216,34 @@ class ContextPackage:
 
     # -- item line ---------------------------------------------------------
 
-    def _render_item_line(self, item: ContextItem, path_width: int, term_width: int, glyphs) -> str:
-        path_field = item.path.ljust(path_width)
+    def _render_item_lines(self, item: ContextItem, layout: "_ColumnLayout", glyphs) -> list[str]:
+        """One item as one or two lines, per `layout` (see _column_layout()).
+
+        detail (the reason, plus the "via" marker) always gets at least
+        MIN_REASON_WIDTH characters -- never the near-nothing a starved
+        path column used to leave it. When even a minimally-shrunk path
+        column can't free up MIN_REASON_WIDTH for the reason, the reason
+        wraps onto its own indented line instead of being truncated to
+        uselessness -- see _column_layout()'s `wrap` flag.
+        """
         detail = item.reason
         via = _via_marker(item)
         if via:
             detail += f"  {glyphs.VIA} via {via}"
 
-        prefix = f"  {path_field}  "
-        budget = max(term_width - len(prefix), 16)
-        detail = _truncate(detail, budget)
-        return f"{prefix}{detail}"
+        if not layout.wrap:
+            path_field = _elide_path_middle(item.path, layout.path_width).ljust(layout.path_width)
+            detail = _truncate(detail, layout.reason_width)
+            return [f"{_INDENT}{path_field}{_GUTTER}{detail}"]
+
+        # Narrow terminal: path gets its own line (elided/truncated to fit),
+        # reason wraps onto the next line at a deeper indent so it keeps a
+        # full line's worth of width rather than sharing one line with the
+        # path column.
+        path_line = f"{_INDENT}{_elide_path_middle(item.path, layout.path_width)}"
+        detail = _truncate(detail, layout.reason_width)
+        reason_line = f"{_WRAP_INDENT}{detail}"
+        return [path_line, reason_line]
 
     # -- weak signal ----------------------------------------------------------
 
@@ -413,6 +471,83 @@ def _truncate(text: str, width: int) -> str:
     if width <= 3:
         return text[:width]
     return text[: width - 3].rstrip() + "..."
+
+
+@dataclass
+class _ColumnLayout:
+    """How one render() pass lays out the path/reason columns -- computed
+    once per call from the shown items and the terminal width, then reused
+    for every item line. See _column_layout().
+    """
+
+    path_width: int
+    reason_width: int
+    wrap: bool
+
+
+def _column_layout(shown: list[ContextItem], term_width: int) -> _ColumnLayout:
+    """Decide path_width/reason_width/wrap for this render() call -- see
+    the "bug fix: reasons truncated into uselessness" comment block above
+    MIN_REASON_WIDTH for the full rationale. Reason width is guaranteed
+    MIN_REASON_WIDTH first; the path column shrinks (down to
+    MIN_PATH_WIDTH) to make room for it, and only when that still isn't
+    enough does the layout fall back to a wrapped, two-line-per-item mode.
+    """
+    longest_path = max((len(item.path) for item in shown), default=0)
+    desired_path_width = min(longest_path, MAX_PATH_COLUMN)
+    available = max(term_width - INDENT_WIDTH - GUTTER_WIDTH, 0)
+
+    if available - desired_path_width >= MIN_REASON_WIDTH:
+        return _ColumnLayout(desired_path_width, available - desired_path_width, wrap=False)
+
+    # Shrink the path column just enough to hand the reason column exactly
+    # MIN_REASON_WIDTH, but never below MIN_PATH_WIDTH (a path any shorter
+    # than that stops being recognizable even middle-elided).
+    shrunk_path_width = min(desired_path_width, max(MIN_PATH_WIDTH, available - MIN_REASON_WIDTH))
+    reason_width = available - shrunk_path_width
+
+    if reason_width >= MIN_REASON_WIDTH:
+        return _ColumnLayout(shrunk_path_width, reason_width, wrap=False)
+
+    # Even a minimally-shrunk path column doesn't leave MIN_REASON_WIDTH
+    # for the reason -- the terminal is too narrow for both columns to
+    # share one line at all. Give the path its own line (as wide as the
+    # terminal allows) and let the reason wrap onto a second, indented
+    # line with (nearly) the whole width to itself.
+    path_width = min(desired_path_width, max(term_width - INDENT_WIDTH, 1))
+    wrapped_reason_width = max(term_width - WRAP_INDENT_WIDTH, 1)
+    return _ColumnLayout(path_width, wrapped_reason_width, wrap=True)
+
+
+def _elide_path_middle(path: str, width: int) -> str:
+    """Shrink `path` to fit `width` columns, preserving the basename --
+    the most identifying part of a path -- by dropping middle directory
+    segments first rather than truncating from the right. E.g.
+    ".github/ISSUE_TEMPLATE/bug_report.yml" at width 26 becomes
+    ".../bug_report.yml", not "gh/ISSUE_TEMPLATE/bug_rep...".
+
+    Only falls back to truncating the basename itself (via _truncate, so
+    it still ends in "..." rather than being cut off silently) when even
+    the elision marker plus the bare basename doesn't fit -- an
+    exceptionally narrow column or an unusually long filename.
+    """
+    if width <= 0:
+        return ""
+    if len(path) <= width:
+        return path
+
+    basename = path.rsplit("/", 1)[-1]
+    if len(_PATH_ELIDE_MARKER) + len(basename) > width:
+        return _truncate(basename, width)
+
+    segments = path.split("/")
+    if len(segments) > 1:
+        head = segments[0]
+        candidate = f"{head}/{_PATH_ELIDE_MARKER}{basename}"
+        if len(candidate) <= width:
+            return candidate
+
+    return f"{_PATH_ELIDE_MARKER}{basename}"
 
 
 def _tokenize_for_ranking(task: str) -> list[str]:
