@@ -269,7 +269,7 @@ class ContextPackage:
             names = ", ".join(f'"{t}"' for t in matched)
             head = f"Weak match. Only {names} matched anything, and each is common across many files."
 
-        lines = [f"  {glyphs.WARN} {head}"]
+        lines = [f"  {glyphs.WEAK} {head}"]
 
         others = [(t, c) for t, c in all_counts.items() if t not in matched]
         if others:
@@ -419,8 +419,20 @@ class ContextPackage:
         return asdict(self)
 
 
+# --- bug fix: weak-match warning and conflict findings were visually
+# indistinguishable ---------------------------------------------------
+#
+# Both the "weak match" warning (SELECT is unsure the results are relevant
+# at all) and a configuration_discrepancy finding (a specific, concrete
+# fact about two files disagreeing) used the same "⚠" marker, so a reader
+# skimming the output could not tell which kind of thing they were
+# looking at without reading the sentence. WARN stays "⚠" for conflicts
+# (an earlier design's convention, restored here); WEAK gets its own
+# marker, distinct from both WARN (conflicts) and GAP (missing test
+# references, "○"), with an ASCII fallback of its own.
 class _UnicodeGlyphs:
     WARN = "⚠"
+    WEAK = "≈"
     GAP = "○"
     VIA = "←"
     DOT = "·"
@@ -428,6 +440,7 @@ class _UnicodeGlyphs:
 
 class _AsciiGlyphs:
     WARN = "!"
+    WEAK = "~"
     GAP = "o"
     VIA = "<-"
     DOT = "*"

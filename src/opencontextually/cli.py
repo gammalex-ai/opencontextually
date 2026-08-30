@@ -8,14 +8,48 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
-from . import get_context
+from . import __version__, get_context
+
+# --- bug fix: "-json" (single dash) produced a bare, unhelpful argparse
+# error -------------------------------------------------------------------
+#
+# `octx "task" -json` is a natural typo (many CLIs accept a single dash for
+# long options), but argparse rejects it as an "unrecognized arguments"
+# token with no indication of what to do instead. The fix does not
+# silently accept the single-dash form -- `-json` is not `--json` and
+# treating it as such would set a precedent this parser does not otherwise
+# honor (`-v` already means something different from `--v...`) -- it only
+# recognizes the mistake and suggests the correct flag alongside argparse's
+# normal error, so the user still has to type it correctly. Names here
+# must be kept in sync with the long options registered below.
+_LONG_FLAG_NAMES = ("root", "json", "verbose", "all", "version", "help")
+_SINGLE_DASH_LONG_FLAG_RE = re.compile(
+    r"(?<!-)-(" + "|".join(_LONG_FLAG_NAMES) + r")\b"
+)
+
+
+class _FriendlyArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # noqa: D401 -- argparse's own signature
+        hints = []
+        for match in _SINGLE_DASH_LONG_FLAG_RE.finditer(message):
+            hints.append(f"--{match.group(1)}")
+        if hints:
+            self.print_usage(sys.stderr)
+            suggestion = " or ".join(dict.fromkeys(hints))  # de-dupe, keep order
+            self.exit(
+                2,
+                f"{self.prog}: error: {message}\n"
+                f"{self.prog}: hint: did you mean '{suggestion}' (two dashes)?\n",
+            )
+        super().error(message)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = _FriendlyArgumentParser(
         prog="octx",
         description=(
             "Select the local files relevant to a task, bounded to a "
@@ -44,6 +78,12 @@ def main(argv: list[str] | None = None) -> int:
         dest="show_all",
         action="store_true",
         help="list every included file instead of the top slice (plain-text output only)",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="print the installed opencontextually version and exit",
     )
     args = parser.parse_args(argv)
 
