@@ -106,6 +106,43 @@ def test_weak_signal_does_not_fire_on_genuine_multi_term_match(tmp_path):
     assert "Weak match" not in package.render()
 
 
+def _make_common_word_repo(root: Path) -> None:
+    # A term with fname_count == 0 that is *common* rather than rare: it
+    # shows up, in prose, in a large share (>15%) of the repo's files, and
+    # no filename anywhere carries it. "english" by contrast appears
+    # nowhere at all -- the classic rare-content case the original rule
+    # already caught. Neither term corroborates anything distinctive; both
+    # tails (common and rare) are weak.
+    for i in range(4):
+        _write(
+            root,
+            f"docs/notes-{i}.md",
+            "In plain terms: keep this plain, write it plain, plain plain plain.\n",
+        )
+    # Filler so "plain" is a minority (~20%) of the repo, not a majority --
+    # this is what distinguishes "common" from "the only kind of file
+    # here."
+    for i in range(16):
+        _write(root, f"src/module_{i}.py", f"def helper_{i}():\n    return {i}\n")
+
+
+def test_weak_signal_fires_on_common_content_only_term(tmp_path):
+    # Regression test for the defect where a content-only term was judged
+    # weak only when *rare* (<= WEAK_CONTENT_RARE_COUNT files), never when
+    # *common* (a large share of the repo) -- see WEAK_CONTENT_COMMON_RATIO
+    # above detect_weak_signal(). "plain" here matches ~20% of discovered
+    # files by content alone (no filename match anywhere), which is
+    # generic-prose-level evidence, not a real signal -- yet the old rule
+    # let it stand in as "strong" simply because it wasn't rare.
+    _make_common_word_repo(tmp_path)
+    package = get_context("what's wrong, in plain English", root=tmp_path)
+
+    assert package.included, "results must still be shown, never suppressed"
+    assert package.weak_signal is not None
+    assert "plain" in package.weak_signal["matched_terms"]
+    assert "Weak match" in package.render()
+
+
 def test_weak_signal_never_fires_for_single_term_task(tmp_path):
     # Single-term tasks have coverage_ratio == 1.0 for any matching file
     # by construction -- "only one term matched" would be true of every

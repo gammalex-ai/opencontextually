@@ -67,6 +67,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         items,
         selection_stats["term_file_counts"],
         compute_filename_word_counts(discovered),
+        selection_stats["total_files"],
     )
 
     # CHECK: configuration_discrepancy. Lexical, high-precision/low-recall

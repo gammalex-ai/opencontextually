@@ -1701,7 +1701,11 @@ def select(
         "below_threshold": below_count,
         "over_cap": seed_over_cap_count + expansion_over_cap_count + final_over_cap_count,
     }
-    selection_stats = {"terms": terms, "term_file_counts": term_file_counts}
+    selection_stats = {
+        "terms": terms,
+        "term_file_counts": term_file_counts,
+        "total_files": len(discovered),
+    }
     return final_items, extra_exclusions, selection_stats
 
 
@@ -1757,12 +1761,54 @@ def select(
 WEAK_FILENAME_COMMON_COUNT = 4
 WEAK_CONTENT_RARE_COUNT = 5
 
+# --- bug fix: a content-only term treated as weak only when rare, never
+# when common -----------------------------------------------------------
+#
+# The rule above has a hole: a content-only term (fname_count == 0) was
+# only ever judged weak for being *rare* (<= WEAK_CONTENT_RARE_COUNT
+# files). There was no symmetric case for a content-only term that is
+# very *common* -- appearing in a large share of the repo's files. But a
+# word mentioned in, say, a fifth of every discovered file is generic
+# prose (an ordinary English word, a boilerplate phrase, a word every doc
+# happens to use) -- that is *weaker* evidence of relevance than a rare
+# word, not stronger. Both tails of the distribution are weak; only a
+# term with a meaningful-but-not-overwhelming presence -- a real, if
+# imperfect, content signal -- is a genuine one.
+#
+# Observed on OpenContextually's own repo: `octx "what's wrong, in plain
+# English"` tokenizes to ["plain", "english"]. "plain" has fname_count 0
+# and appears in the content of 13 of 64 discovered files (~20%) --
+# clearly not "rare" under WEAK_CONTENT_RARE_COUNT, so the old rule
+# treated it as strong signal on its own and never warned, even though
+# every included file matched only "plain" (a generic word appearing all
+# over READMEs, templates, and docs) and "english" matched nothing at
+# all. That is exactly the weak-match case this function exists to catch.
+#
+# WEAK_CONTENT_COMMON_RATIO is expressed as a *proportion* of the files
+# this run actually discovered (`total_files`), not a fixed file count,
+# so the same rule scales correctly from a 75-file repo (this one) to a
+# 7,000-file monorepo: "appears in 20% of the repo" is the same strength
+# of evidence regardless of how many files that percentage happens to be,
+# whereas a fixed count like "appears in >=15 files" would falsely call a
+# genuinely common term rare on a huge repo and falsely call a genuinely
+# distinctive term common on a tiny one. 0.15 (15%) was chosen by testing
+# against real tasks: it catches "plain" (~20% of files) while leaving a
+# genuinely distinctive term corroborating a good match untouched (e.g.
+# "mobile" at ~7% of files on a real Next.js repo). On ~/Dali, "citation"
+# and "verification" both trip WEAK_FILENAME_COMMON_COUNT on their own
+# (each names >=4 discovered files), so the per-item bail-out below finds
+# a genuinely strong pair before this ratio ever has to judge the task's
+# other, more common terms ("returns" included) -- exactly the outcome
+# the real-repo check confirmed.
+WEAK_CONTENT_COMMON_RATIO = 0.15
+
 
 def detect_weak_signal(
     terms: list[str],
     included: list[ContextItem],
     term_file_counts: dict[str, int],
     filename_word_counts: dict[str, int],
+    total_files: int = 0,
 ) -> dict | None:
     """Return a weak_signal summary dict (see ContextPackage.weak_signal)
     when `included` clears SCORE_THRESHOLD but the signal behind it is
@@ -1786,8 +1832,12 @@ def detect_weak_signal(
         fname_count = filename_word_counts.get(term.lower(), 0)
         if fname_count >= WEAK_FILENAME_COMMON_COUNT:
             return True
-        if fname_count == 0 and term_file_counts.get(term, 0) <= WEAK_CONTENT_RARE_COUNT:
-            return True
+        if fname_count == 0:
+            content_count = term_file_counts.get(term, 0)
+            if content_count <= WEAK_CONTENT_RARE_COUNT:
+                return True
+            if total_files > 0 and content_count >= WEAK_CONTENT_COMMON_RATIO * total_files:
+                return True
         return False
 
     # A file combining two individually-strong terms is real convergent
