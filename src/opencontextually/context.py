@@ -266,8 +266,13 @@ class ContextPackage:
             term, count = next(iter(matched.items()))
             head = f'Weak match. Only "{term}" matched anything, and {_files(count)} share that name.'
         else:
-            names = ", ".join(f'"{t}"' for t in matched)
-            head = f"Weak match. Only {names} matched anything, and each is common across many files."
+            # State each term's own count rather than a blanket claim. Terms
+            # reach this warning for opposite reasons -- one may be too common
+            # to discriminate, another too thin to corroborate -- so asserting
+            # "each is common" is wrong for half of them and reads as the tool
+            # not knowing what it found.
+            parts = [f'"{t}" in {_files(c)}' for t, c in matched.items()]
+            head = f"Weak match. Only {', '.join(parts)} matched, and no file matched more than one term."
 
         lines = [f"  {glyphs.WEAK} {head}"]
 
