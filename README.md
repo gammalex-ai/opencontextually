@@ -110,10 +110,12 @@ The `session.py` example above is the small version of the thing this
 tool is actually for: a file that shares none of the task's vocabulary,
 found anyway because a file that *does* match imports it.
 
-The clearest real case found while testing against real repos: a task
-described as **"citation verification returns wrong confidence score"**
-surfaced `dali/scoring/existence.py` — a file containing zero occurrences
-of "citation" or "confidence." It was included because `verification.py`
+The clearest real case found while testing against real repos — and one
+you can check yourself, since the repo is public
+([yenklabs/Dali](https://github.com/yenklabs/Dali)): a task described as
+**"citation verification returns wrong confidence score"** surfaced
+`dali/scoring/existence.py` — a file containing zero occurrences of
+"citation" or "confidence." It was included because `verification.py`
 (which does match the task lexically) has:
 
 ```python
