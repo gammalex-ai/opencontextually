@@ -14,11 +14,19 @@ pip install -e ".[dev]"
 pytest
 ```
 
-To also exercise the MCP server module, install the `mcp` extra first:
+190 tests, sub-second locally. To also exercise the MCP server module,
+install the `mcp` extra first:
 
 ```
 pip install -e ".[dev,mcp]"
 ```
+
+## CI
+
+Every push and pull request runs `pytest` on Python 3.10, 3.11, 3.12, and
+3.13 via GitHub Actions (`.github/workflows/test.yml`), matching the
+`requires-python = ">=3.10"` claim in `pyproject.toml`. A PR is expected
+to pass on all four before merge.
 
 ## Scope discipline
 
