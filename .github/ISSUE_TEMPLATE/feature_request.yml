@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest something OpenContextually should do differently.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: this project deliberately declines features that
+        don't make `get_context(task)` materially better for the first
+        developer who runs it. See CONTRIBUTING.md's "Scope discipline"
+        section for what's out of scope (agents, models, routers, memory,
+        RAG, dashboards, hosted services, and similar) — if your request
+        falls in that territory, expect a decline, not because the idea is
+        bad, but because it doesn't belong in this project.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: Describe the situation, not the fix.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should `get_context()` / `octx` do instead?
+    validations:
+      required: true

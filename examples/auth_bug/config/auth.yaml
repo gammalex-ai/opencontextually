@@ -1,0 +1,6 @@
+# Authentication configuration.
+session:
+  timeout_minutes: 60
+  cookie_name: session_id
+  secure: true
+  secret_key: CHANGE_ME_IN_PRODUCTION

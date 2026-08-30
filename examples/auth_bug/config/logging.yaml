@@ -1,0 +1,5 @@
+version: 1
+level: info
+handlers:
+  console:
+    format: "%(asctime)s %(levelname)s %(message)s"
