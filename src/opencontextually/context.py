@@ -79,6 +79,40 @@ _WRAP_INDENT = " " * WRAP_INDENT_WIDTH
 _PATH_ELIDE_MARKER = ".../"
 
 
+# --- bug fix: the exclusion summary was unreadable ------------------------
+#
+# The old footer was one comma-joined line of internal bucket names --
+# "below_threshold=61, binary=0, duplicate=0, ignored=11, over_budget=2,
+# over_cap=0, oversize=0" -- with three problems: the names are
+# implementation jargon no user asked for ("over_budget" vs. "over_cap"
+# means nothing without reading selector.py); every bucket printed even
+# at 0, which was four of seven slots on a typical run doing nothing but
+# padding the line; and "N unrelated files" described every excluded file
+# the same way, which is simply false for two different groups -- a
+# gitignored file was never scanned, so "unrelated" was never evaluated
+# for it, and a file that cleared the relevance bar and then got dropped
+# for running out of excerpt room was judged *relevant*, not unrelated,
+# and the reader is silently missing a real result.
+#
+# The fix maps each internal bucket to a plain-language label and a
+# category -- "not_scanned" (gitignored/binary/oversize/duplicate: never
+# evaluated at all), "not_relevant" (below_threshold: scanned and judged
+# not to matter), or "dropped" (over_cap/over_budget: judged relevant,
+# then cut for space) -- and _render_exclusion_summary() below only
+# prints a category line when its total is non-zero, with the "dropped"
+# line marked and always listed first since it is the one number that
+# means the reader is missing something the tool thought mattered.
+_EXCLUSION_LABELS: dict[str, tuple[str, str]] = {
+    "ignored": ("gitignored", "not_scanned"),
+    "binary": ("binary", "not_scanned"),
+    "oversize": ("too large to scan", "not_scanned"),
+    "duplicate": ("exact duplicate of another file", "not_scanned"),
+    "below_threshold": ("below the relevance bar", "not_relevant"),
+    "over_cap": ("the result list was already full", "dropped"),
+    "over_budget": ("ran out of room in the excerpt budget", "dropped"),
+}
+
+
 @dataclass
 class Excerpt:
     """A bounded, 1-indexed, inclusive span of a file's text."""
@@ -208,7 +242,7 @@ class ContextPackage:
                 lines.extend(finding_lines)
 
         lines.append("")
-        lines.append(self._render_exclusion_summary())
+        lines.extend(self._render_exclusion_summary(glyphs))
         lines.append("")
         lines.append(self._render_checks_footer())
 
@@ -377,18 +411,68 @@ class ContextPackage:
         sep = f"  {glyphs.DOT}  "
         return "  " + sep.join(parts)
 
-    def _render_exclusion_summary(self) -> str:
-        if self.excluded_count:
-            return f"Excluded: {self.excluded_count} unrelated files ({self._render_reason_buckets()})"
-        return "Excluded: (none)"
+    def _render_exclusion_summary(self, glyphs) -> list[str]:
+        """Plain-language exclusion footer -- see the "bug fix" note above
+        _EXCLUSION_LABELS for the full rationale. Three things this fixes
+        over the old single comma-list line:
 
-    def _render_reason_buckets(self) -> str:
-        if not self.excluded_by_reason:
-            return "no reasons recorded"
-        return ", ".join(
-            f"{reason}={count}"
-            for reason, count in sorted(self.excluded_by_reason.items())
-        )
+        1. Internal bucket names (below_threshold, over_budget, ...) never
+           reach the reader -- only the plain-language labels in
+           _EXCLUSION_LABELS do.
+        2. A bucket that is 0 (true for most buckets on a typical run --
+           measured on this repo and ~/Dali) is never printed.
+        3. "unrelated files" no longer describes every excluded file --
+           gitignored/binary/oversize/duplicate files were never scanned
+           (so "unrelated" is not even evaluated), and below-threshold
+           files were scanned and judged not relevant; only those two
+           groups get the old blanket description. Files that cleared the
+           relevance bar and were then dropped (over budget/over cap) are
+           not "unrelated" at all -- they are real results the reader is
+           not seeing -- and get their own marked-up line rather than a
+           slot in a list, so that loss is not silently buried.
+
+        This is presentation only: `self.excluded_by_reason` (what
+        to_dict() serializes) is untouched -- only how render() describes
+        it changes.
+        """
+        if not self.excluded_count:
+            return ["Excluded: none"]
+
+        not_scanned_counts: list[tuple[str, int]] = []
+        not_relevant_total = 0
+        dropped_counts: list[tuple[str, int]] = []
+
+        for key, count in sorted(self.excluded_by_reason.items()):
+            if not count:
+                continue
+            label, category = _EXCLUSION_LABELS.get(key, (key, "not_scanned"))
+            if category == "not_scanned":
+                not_scanned_counts.append((label, count))
+            elif category == "not_relevant":
+                not_relevant_total += count
+            elif category == "dropped":
+                dropped_counts.append((label, count))
+
+        lines = [f"Excluded: {self.excluded_count} files"]
+
+        # Most important first: real results the reader is not seeing --
+        # see point 3 above. Marked with WARN so it cannot be mistaken for
+        # routine housekeeping the way it was buried in the old list.
+        if dropped_counts:
+            total = sum(c for _label, c in dropped_counts)
+            noun = "file" if total == 1 else "files"
+            detail = _join_category_detail(dropped_counts, total)
+            lines.append(f"  {glyphs.WARN} {total} relevant {noun} dropped -- {detail}")
+        if not_relevant_total:
+            noun = "file" if not_relevant_total == 1 else "files"
+            lines.append(f"  {not_relevant_total} {noun} scanned, not relevant enough")
+        if not_scanned_counts:
+            total = sum(c for _label, c in not_scanned_counts)
+            noun = "file" if total == 1 else "files"
+            detail = _join_category_detail(not_scanned_counts, total)
+            lines.append(f"  {total} {noun} not scanned ({detail})")
+
+        return lines
 
     def _render_checks_footer(self) -> str:
         """Name which checks actually ran. configuration_discrepancy and
@@ -481,6 +565,20 @@ def _via_marker(item: ContextItem) -> str | None:
     left, _, right = edge.partition(" imports ")
     other_path = right if left == item.path else left
     return PurePosixPath(other_path).name
+
+
+def _join_category_detail(counts: list[tuple[str, int]], total: int) -> str:
+    """Render the parenthetical/trailing detail for one exclusion category
+    in _render_exclusion_summary(). A category with exactly one
+    contributing reason just names it (its count is already the line's
+    leading number -- repeating it would read as "2 files ... 2 reason",
+    the exact redundancy this rewrite exists to avoid); a category with
+    more than one reason breaks the total down per reason so the reader
+    can tell them apart.
+    """
+    if len(counts) == 1:
+        return counts[0][0]
+    return ", ".join(f"{count} {label}" for label, count in counts)
 
 
 def _truncate(text: str, width: int) -> str:
