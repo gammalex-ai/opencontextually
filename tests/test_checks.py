@@ -643,3 +643,103 @@ def test_config_gap_fires_only_when_corroborated_by_conflict(tmp_path):
         items, discovered, "fix the session timeout", conflicts=[conflict]
     )
     assert any("timeout" in f["term"] for f in with_conflict)
+
+
+# --- bug fix: conflicts scoped to the task ---------------------------------
+#
+# configuration_discrepancy used to scan every discovered config/doc file
+# regardless of what the task asked about, so a real (but wholly
+# unrelated) config/doc disagreement elsewhere in the repo could surface
+# under a task that never named, matched, or included either cited file --
+# observed for real: a task about "plain English" output citing this
+# project's own examples/auth_bug fixture files. A finding must now
+# survive only when at least one cited file is in `included_paths` or
+# lexically matches one of `task_terms`.
+
+
+def _unrelated_conflict_fixture(tmp_path):
+    _write(
+        tmp_path / "config" / "auth.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "docs" / "security.md",
+        "# Security\n\n- Session timeout: 30 minutes.\n",
+    )
+    return _discover(tmp_path)
+
+
+def test_unscoped_call_keeps_pre_scoping_behavior(tmp_path):
+    # Omitting both included_paths and task_terms entirely (the old
+    # call shape) must not silently start dropping every finding --
+    # scoping only activates when a caller actually opts in.
+    discovered = _unrelated_conflict_fixture(tmp_path)
+    findings = find_configuration_discrepancies(discovered)
+    assert len(findings) == 1
+
+
+def test_conflict_suppressed_when_neither_file_relates_to_task(tmp_path):
+    discovered = _unrelated_conflict_fixture(tmp_path)
+    findings = find_configuration_discrepancies(
+        discovered,
+        included_paths=set(),
+        task_terms=["plain", "english"],
+    )
+    assert findings == []
+
+
+def test_conflict_kept_when_config_file_is_included(tmp_path):
+    discovered = _unrelated_conflict_fixture(tmp_path)
+    findings = find_configuration_discrepancies(
+        discovered,
+        included_paths={"config/auth.yaml"},
+        task_terms=["plain", "english"],
+    )
+    assert len(findings) == 1
+
+
+def test_conflict_kept_when_doc_file_is_included(tmp_path):
+    discovered = _unrelated_conflict_fixture(tmp_path)
+    findings = find_configuration_discrepancies(
+        discovered,
+        included_paths={"docs/security.md"},
+        task_terms=["plain", "english"],
+    )
+    assert len(findings) == 1
+
+
+def test_conflict_kept_when_task_terms_lexically_match_a_cited_path(tmp_path):
+    # "auth" isn't in either file's *content* relevance, but it is a
+    # literal path segment of config/auth.yaml -- a lexical path match is
+    # enough to connect the finding to the task even with no included
+    # files at all.
+    discovered = _unrelated_conflict_fixture(tmp_path)
+    findings = find_configuration_discrepancies(
+        discovered,
+        included_paths=set(),
+        task_terms=["auth"],
+    )
+    assert len(findings) == 1
+
+
+def test_auth_bug_conflict_still_fires_when_scoped_to_its_own_task():
+    # The real fixture the e2e test depends on: task-scoping must not
+    # regress the one conflict this rule is meant to catch.
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent / "examples" / "auth_bug"
+    discovered, _reasons = discover(root)
+    findings = find_configuration_discrepancies(
+        discovered,
+        included_paths={
+            "src/auth/middleware.py",
+            "src/users/session.py",
+            "tests/test_auth.py",
+            "README.md",
+            "config/auth.yaml",
+            "docs/security.md",
+        },
+        task_terms=["authentication", "bug"],
+    )
+    assert len(findings) == 1
+    assert findings[0]["setting"] == "session.timeout_minutes"

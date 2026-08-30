@@ -85,7 +85,16 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # already does for its own emptiness case below. Still always recorded
     # in trace["rules_run"], so the render() footer accurately reports
     # which checks ran regardless of whether either found something.
-    conflicts = find_configuration_discrepancies(discovered, cache) if items else []
+    conflicts = (
+        find_configuration_discrepancies(
+            discovered,
+            cache,
+            included_paths={item.path for item in items},
+            task_terms=selection_stats["terms"],
+        )
+        if items
+        else []
+    )
 
     # CHECK: test_reference_gap. Lexical, high-precision/low-recall -- see
     # checks.py. Runs only over the files SELECT actually chose for this

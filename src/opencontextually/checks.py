@@ -26,7 +26,7 @@ import re
 
 from .discovery import DiscoveredFile
 from .filecache import RunCache
-from .selector import _looks_like_secret_key
+from .selector import _looks_like_secret_key, has_word_match
 
 RULE_ID = "configuration_discrepancy"
 RULE_ID_TEST_REFERENCE_GAP = "test_reference_gap"
@@ -456,8 +456,32 @@ def _collect_doc_assertions(doc_files: list[DiscoveredFile], cache: RunCache) ->
     return assertions
 
 
+def _cited_file_is_task_relevant(
+    path: str, included_paths: set[str] | None, task_terms: list[str] | None
+) -> bool:
+    """True if `path` connects to the current task: either it is one of
+    the files SELECT actually included, or its own path text lexically
+    matches one of the task's terms (the same word-boundary match SELECT
+    uses for filename/path scoring -- see selector.has_word_match).
+
+    Both `included_paths` and `task_terms` default to None so callers that
+    have neither (e.g. an older caller, or a direct unit test of the raw
+    rule) get the pre-scoping behavior of "everything is relevant" rather
+    than a hard failure -- the *scoped* entry point is
+    find_configuration_discrepancies, which always passes both.
+    """
+    if included_paths is not None and path in included_paths:
+        return True
+    if task_terms:
+        return any(has_word_match(path, term) for term in task_terms)
+    return False
+
+
 def find_configuration_discrepancies(
-    discovered: list[DiscoveredFile], cache: RunCache | None = None
+    discovered: list[DiscoveredFile],
+    cache: RunCache | None = None,
+    included_paths: set[str] | None = None,
+    task_terms: list[str] | None = None,
 ) -> list[dict]:
     """Find same-named scalar settings declared with different values
     across a config file and a doc.
@@ -478,6 +502,21 @@ def find_configuration_discrepancies(
       - secret-looking keys are never reported, even though in practice
         they never parse as numeric scalars either.
 
+    Scoped to the task (bug fix): a same-named-setting disagreement is a
+    structural fact about the whole repo, independent of what was asked --
+    this rule used to scan every discovered config/doc file regardless of
+    `included_paths`/`task_terms`, so it could and did surface a conflict
+    between two files neither named by, nor lexically connected to, the
+    task at hand (observed: a task about "plain English" output citing
+    this project's own auth_bug *fixture's* config/docs, which the task
+    never touched). A finding now survives only when at least one of the
+    two cited files -- the config file or the doc file -- is either a file
+    SELECT actually included for this task (`included_paths`) or matches
+    one of the task's own terms by path (`task_terms`, via
+    selector.has_word_match). Both default to None (meaning "no scoping"),
+    so a caller that omits them keeps the wider, pre-scoping behavior --
+    but get_context() always supplies both.
+
     Returns a list of finding dicts, each carrying at minimum: "rule"
     (the rule id), "setting" (the dotted key name), "config" and "doc"
     (each {"path", "line", "value"}), and a human-readable "message".
@@ -493,6 +532,12 @@ def find_configuration_discrepancies(
     doc_assertions = _collect_doc_assertions(doc_files, cache)
     if not doc_assertions:
         return []
+
+    # Scoping only activates when the caller actually supplies one of the
+    # two signals -- omitting both entirely (an older caller, or a direct
+    # unit test of the raw rule) keeps every finding, matching the rule's
+    # pre-scoping behavior.
+    scoping_active = included_paths is not None or task_terms is not None
 
     findings: list[dict] = []
     seen: set[tuple[str, int, str, int]] = set()
@@ -531,6 +576,16 @@ def find_configuration_discrepancies(
                     continue
                 if math.isclose(config_norm, assertion["normalized"], rel_tol=1e-9, abs_tol=1e-9):
                     continue  # both sides agree -- not a discrepancy
+
+                if scoping_active and not (
+                    _cited_file_is_task_relevant(config_file.path, included_paths, task_terms)
+                    or _cited_file_is_task_relevant(assertion["path"], included_paths, task_terms)
+                ):
+                    # Neither cited file connects to this task -- see the
+                    # "Scoped to the task" note in this function's
+                    # docstring. A real repo-wide discrepancy still exists,
+                    # but volunteering it here reads as unrelated noise.
+                    continue
 
                 dedup_key = (config_file.path, lineno, assertion["path"], assertion["line"])
                 if dedup_key in seen:
