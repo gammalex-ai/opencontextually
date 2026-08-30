@@ -743,3 +743,133 @@ def test_auth_bug_conflict_still_fires_when_scoped_to_its_own_task():
     )
     assert len(findings) == 1
     assert findings[0]["setting"] == "session.timeout_minutes"
+
+
+# --- bug fix: private helpers reported as user-facing findings -------------
+#
+# test_reference_gap used to turn any def/class name (public or private)
+# into a concept, then report "no test references <words split from the
+# name>" once corroborated by a gated call. Observed for real on this
+# project's own repo: `_looks_like_secret_key`, a private redaction
+# helper, produced "no test references looks like secret key" on three
+# unrelated tasks ("how does discovery walk the tree", "the redaction
+# masks ordinary code", "what's wrong, in plain English") purely because
+# selector.py -- the file that defines and gates it -- happened to be
+# selected on incidental word matches (`ast.walk` appears throughout).
+# Leading-underscore names are implementation details by convention, not
+# something a caller or test is expected to reference directly, and
+# splitting one into words routinely produces unreadable prose. Fixed two
+# ways: private/dunder names never become a concept at all, and even a
+# public symbol only corroborates when its gate lives in a *different*
+# file than its own definition (same-file gating is just the module using
+# its own helper, not "another part of the codebase" depending on it).
+
+
+def test_private_helper_never_becomes_a_finding(tmp_path):
+    _write(
+        tmp_path / "src" / "redact.py",
+        "def _looks_like_secret_key(key):\n"
+        "    return 'secret' in key\n\n"
+        "def redact_value(key, value):\n"
+        "    if not _looks_like_secret_key(key):\n"
+        "        return value\n"
+        "    return '***'\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_something_else.py",
+        "def test_unrelated():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "how does discovery walk the tree")
+
+    assert not any("secret" in f["term"] for f in findings), findings
+    assert not any("looks like" in f["message"] for f in findings), findings
+
+
+def test_private_helper_still_excluded_even_when_gated_from_another_file(tmp_path):
+    # Even with a cross-file gate (which would otherwise corroborate a
+    # public symbol -- see the class of tests above), a private name must
+    # never surface: privacy is checked before corroboration, not instead
+    # of it.
+    _write(
+        tmp_path / "src" / "redact.py",
+        "def _looks_like_secret_key(key):\n    return 'secret' in key\n",
+    )
+    _write(
+        tmp_path / "src" / "config_loader.py",
+        "def load(key, value):\n"
+        "    if _looks_like_secret_key(key):\n"
+        "        raise ValueError('refusing to log secret')\n"
+        "    return value\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_something_else.py",
+        "def test_unrelated():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "load configuration values")
+
+    assert not any("secret" in f["term"] for f in findings), findings
+
+
+def test_same_file_gate_does_not_corroborate_a_public_symbol(tmp_path):
+    # A public symbol gated only within its *own* defining file is not
+    # "another part of the codebase" depending on it -- see
+    # _gated_elsewhere() in checks.py. Without a cross-file gate this
+    # finding must not survive the corroboration bar.
+    _write(
+        tmp_path / "src" / "widget.py",
+        "def is_widget_ready(widget):\n"
+        "    return widget.state == 'ready'\n\n"
+        "def render(widget):\n"
+        "    if not is_widget_ready(widget):\n"
+        "        raise ValueError('not ready')\n"
+        "    return widget.html\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_something_else.py",
+        "def test_unrelated():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "render the widget")
+
+    assert not any("widget" in f["term"] and "ready" in f["term"] for f in findings), findings
+
+
+def test_cross_file_gate_still_corroborates_a_public_symbol(tmp_path):
+    # The auth_bug shape, isolated: a public symbol defined in one file,
+    # gated from a *different* directly-matched file, must still fire --
+    # this is the real cross-module risky-path signal the rule exists to
+    # surface, and must survive both the privacy filter and the new
+    # cross-file requirement.
+    _write(
+        tmp_path / "src" / "session.py",
+        "def is_session_expired(session_id):\n    return True\n",
+    )
+    _write(
+        tmp_path / "src" / "middleware.py",
+        "def authenticate(store, session_id):\n"
+        "    if is_session_expired(session_id):\n"
+        "        raise ValueError('expired')\n"
+        "    return session_id\n",
+    )
+    _write(
+        tmp_path / "tests" / "test_session.py",
+        "def test_create_and_lookup():\n    assert True\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items = _selected_items(discovered)
+
+    findings = find_test_reference_gaps(items, discovered, "fix the session bug")
+
+    assert any("expir" in f["term"] for f in findings), findings

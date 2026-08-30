@@ -843,9 +843,23 @@ def _source_symbol_concepts(record) -> list[tuple[list[str], int, str]]:
     `record` is the file's filecache.FileRecord; `defs` already holds
     every FunctionDef/AsyncFunctionDef/ClassDef node from one full-tree
     walk, same as a dedicated walk here would find.
+
+    --- bug fix: private helpers reported as user-facing findings --------
+    A leading-underscore name (`_looks_like_secret_key`, `__init__`) is an
+    implementation detail by the language's own convention, not a public
+    behavior a caller (or a test) is expected to exercise directly. Turning
+    one into "no test references X" reads as a real gap but is not one --
+    it also reliably garbles into unreadable prose once split into words
+    ("looks like secret key" for a private redaction helper, observed for
+    real on this repo across unrelated tasks). Skipped here, before a
+    concept is ever built, rather than filtered later by name -- so it
+    never enters `concepts` and can never be "corroborated" into a finding
+    by accident.
     """
     concepts: list[tuple[list[str], int, str]] = []
     for node in record.defs:
+        if node.name.startswith("_"):
+            continue
         words = _meaningful_words(_split_identifier_words(node.name))
         if len(words) >= _MIN_CONCEPT_WORDS:
             concepts.append((words, node.lineno, node.name))
@@ -899,13 +913,16 @@ def _call_names_in(node: ast.AST) -> set[str]:
     return names
 
 
-def _gated_call_names(items: list, discovered: list[DiscoveredFile], cache: RunCache) -> set[str]:
+def _gated_call_names(
+    items: list, discovered: list[DiscoveredFile], cache: RunCache
+) -> dict[str, set[str]]:
     """Names of symbols called as the test of an `if` whose body raises or
     returns, in Python source files that SELECT matched *directly* against
     this task (empty `item.provenance` -- a real filename/symbol/content
-    hit, not a file only reached by following an import edge). This is the
-    corroboration signal for a source-symbol test_reference_gap finding --
-    see the "real-repo tuning" note above.
+    hit, not a file only reached by following an import edge), keyed by
+    the *gating* file's path. This is the corroboration signal for a
+    source-symbol test_reference_gap finding -- see the "real-repo tuning"
+    note above.
 
     Restricted to directly-matched files, not every selected item: without
     this, a gated call sitting entirely inside a transitively-pulled-in
@@ -921,9 +938,14 @@ def _gated_call_names(items: list, discovered: list[DiscoveredFile], cache: RunC
     call into a symbol defined in a transitively-reached file (e.g.
     session.py's `is_session_expired`) is exactly the risky, untested path
     this rule exists to surface.
+
+    Keyed per-file (rather than one flat set) so the caller can require
+    the gate to live in a file *other than* the one that defines the
+    symbol -- see the "bug fix: gate must be elsewhere" note on
+    find_test_reference_gaps() for why a same-file gate does not count.
     """
     discovered_index = {f.path: f for f in discovered}
-    gated: set[str] = set()
+    gated: dict[str, set[str]] = {}
     for item in items:
         if item.role != "source" or not item.path.endswith(".py"):
             continue
@@ -938,8 +960,37 @@ def _gated_call_names(items: list, discovered: list[DiscoveredFile], cache: RunC
         for node in record.if_nodes:
             call_names = _call_names_in(node.test)
             if call_names and _short_circuits(node.body):
-                gated.update(call_names)
+                gated.setdefault(item.path, set()).update(call_names)
     return gated
+
+
+def _gated_elsewhere(symbol_name: str, defining_path: str, gated_names: dict[str, set[str]]) -> bool:
+    """True if `symbol_name` is gated (see _gated_call_names()) in some
+    file *other than* `defining_path`.
+
+    --- bug fix: same-file gating is not task-scoped corroboration -------
+    A source-symbol finding used to be corroborated by *any* gated call to
+    it, including one inside the very same file that defines it. That is
+    not "another part of the codebase branches on this" (the corroboration
+    rationale in find_test_reference_gaps()'s docstring) -- it is just the
+    symbol's own module using it, which every private helper does by
+    definition and says nothing about whether the *task* cares about it.
+    Observed for real: `_looks_like_secret_key`, defined and its only
+    gated call both in selector.py, surfaced as "no test references looks
+    like secret key" on unrelated tasks ("how does discovery walk the
+    tree") purely because selector.py happened to be selected on
+    incidental word matches ("walk" appears throughout via `ast.walk`).
+    `is_session_expired` (session.py) gated from middleware.py -- a
+    genuinely different, directly task-matched file -- still corroborates,
+    which is the real cross-module risky-path signal this rule exists to
+    surface. Combined with dropping private/dunder names entirely (see
+    _source_symbol_concepts()), this closes both the specific reported
+    case and the general shape of it.
+    """
+    for gating_path, names in gated_names.items():
+        if gating_path != defining_path and symbol_name in names:
+            return True
+    return False
 
 
 def find_test_reference_gaps(
@@ -1025,7 +1076,7 @@ def find_test_reference_gaps(
 
         if kind == "config_key" and meta in corroborated_settings:
             strength = _STRENGTH_CORROBORATED
-        elif kind == "source_symbol" and meta in gated_names:
+        elif kind == "source_symbol" and _gated_elsewhere(meta, path, gated_names):
             strength = _STRENGTH_CORROBORATED
         else:
             strength = 0
