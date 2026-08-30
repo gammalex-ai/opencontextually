@@ -81,17 +81,97 @@ TEST_SIGNAL_DAMPING = 0.1
 # (the strongest, most trustworthy evidence of relevance regardless of
 # file size or location):
 #   - LARGE_FILE_CONTENT_PENALTY damps only the content-frequency
-#     component for files over LARGE_FILE_BYTES, since a big file
-#     mentioning a term hundreds of times is not hundreds of times more
-#     relevant than a small file mentioning it once.
+#     component for files over LARGE_FILE_BYTES that look data-like (see
+#     below) -- a big data blob mentioning a term hundreds of times is not
+#     hundreds of times more relevant than a small file mentioning it once.
 #   - DATA_PATH_PENALTY damps the *whole* score for files under a
 #     recognizable data/vendor/build directory (see discovery.DATA_DIR_SEGMENTS),
 #     since bulk data and vendored/generated output are not the files a
 #     developer wants surfaced first even when they happen to score well.
 # Generated files (marked as such in their own header) get the same
 # treatment for the same reason.
+#
+# --- bug fix: the size penalty punished large *source* files identically
+# to large *data* files -----------------------------------------------
+# The original LARGE_FILE_CONTENT_PENALTY applied to every file over
+# LARGE_FILE_BYTES regardless of what the file actually was. That is
+# backwards for a code tool: on this very repo, `octx "the redaction masks
+# ordinary code"` omitted selector.py (85,609 bytes -- the module that
+# *implements* redact_text/_redact_line/_looks_like_secret_key) while
+# keeping three smaller files that merely *describe* redaction, purely
+# because selector.py's content score was multiplied by 0.3 for being over
+# LARGE_FILE_BYTES. sqlfluff has 23 Python files over 50KB -- its rule
+# engine, its dialects, its core linter -- every one of them would be
+# steered away from under the old flat rule for any task that happened to
+# touch them.
+#
+# The fix: judge whether a large file looks like *data* or like *source*
+# before deciding how hard to damp it, reusing signals the file cache
+# already computed (no re-parsing):
+#   - A large `.json`/`.csv`/`.tsv`/`.jsonl`/`.ndjson` file, or a
+#     recognized lockfile/minified asset (already excluded from content
+#     scoring entirely via `_is_asset_like`), is data by construction --
+#     full LARGE_FILE_CONTENT_PENALTY.
+#   - A large `.py` file that parses and defines a plausible number of
+#     top-level/nested symbols relative to its size (see
+#     LARGE_PY_MIN_SYMBOL_DENSITY, computed from `cache.get_record(...)
+#     .defs`, already gathered for the symbol-matching pass above -- no
+#     extra parse) is source, not data: LARGE_SOURCE_CONTENT_PENALTY (no
+#     damping) applies instead. A `.py` file that fails to parse, or
+#     parses but defines almost nothing relative to its size (a huge
+#     generated data literal saved with a `.py` extension), still gets the
+#     full data penalty -- extension alone is not enough.
+#   - A large file in another known source-language extension (JS/TS/Go/
+#     Rust/Java/Ruby/C/C++ -- no stdlib AST available for these) falls
+#     back to the same average-line-length signal `_is_asset_like` already
+#     uses to detect minified/serialized output: plausible line lengths
+#     get the gentler LARGE_WEAK_SOURCE_CONTENT_PENALTY rather than the
+#     full data penalty, since we cannot verify symbol structure the way
+#     we can for Python.
+#   - Everything else (docs, config, unrecognized extensions) keeps the
+#     original full penalty -- the conservative default for a file we have
+#     no structural signal for.
+#
+# Verified against sqlfluff (23 large .py files, density 0.084-4.7
+# defs/KB, all now retained with the source penalty) and against a
+# fixture pairing a large data-like JSON with a smaller genuinely-relevant
+# source file matching the same terms -- the JSON is still damped below
+# the source file (see test_large_data_file_still_demoted_below_source /
+# test_large_source_file_with_symbols_still_ranks in test_selector.py).
 LARGE_FILE_BYTES = 50_000
 LARGE_FILE_CONTENT_PENALTY = 0.3
+LARGE_SOURCE_CONTENT_PENALTY = 1.0
+LARGE_WEAK_SOURCE_CONTENT_PENALTY = 0.6
+
+# Defs (top-level or nested -- same full-tree walk cache.get_record()
+# already provides) per KB of file size. Calibrated against real repos:
+# the *lowest*-density large source files actually observed (fastapi's
+# tests/test_include_router_defaults_overrides.py at 0.084 defs/KB and
+# fastapi/param_functions.py at 0.129 defs/KB, both genuine hand-written
+# source with unusually large docstrings) clear this with several times
+# margin, while a data literal saved as .py (0 defs, any size) does not.
+LARGE_PY_MIN_SYMBOL_DENSITY = 0.05
+
+# Formats that are data by construction regardless of how they score --
+# never given the source-file exemption above even if large. (Lockfiles
+# and other minified/vendored assets are already excluded from content
+# scoring entirely by `_is_asset_like` and so are unaffected by this list
+# either way.)
+LARGE_FILE_DATA_EXTENSIONS = {".json", ".csv", ".tsv", ".jsonl", ".ndjson"}
+
+# Source-language extensions with no stdlib AST available to measure
+# symbol density directly -- these fall back to the average-line-length
+# check instead (see LARGE_WEAK_SOURCE_CONTENT_PENALTY above). Kept
+# separate from (and not imported from) discovery._SOURCE_EXTENSIONS,
+# which is a private module-internal name.
+LARGE_WEAK_SOURCE_EXTENSIONS = {
+    ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".c", ".cpp", ".h", ".hpp",
+}
+# Below this average line length, a large non-Python source-extension file
+# still reads like hand-written code rather than a serialized blob --
+# comfortably under ASSET_AVG_LINE_LENGTH (500), which already catches the
+# actually-minified case via `_is_asset_like` before this check ever runs.
+LARGE_WEAK_SOURCE_AVG_LINE_LENGTH = 200
 
 DATA_PATH_PENALTY = 0.25
 
@@ -652,6 +732,48 @@ def _build_reason(
     return "matches task terms"
 
 
+def _large_file_content_penalty(
+    discovered_file: DiscoveredFile,
+    content: str,
+    is_asset: bool,
+    cache: RunCache,
+) -> float:
+    """Multiplier for `content_score` on a file over LARGE_FILE_BYTES --
+    see the tunables block above LARGE_FILE_CONTENT_PENALTY for the full
+    rationale. Judges whether the file looks like *data* or like *source*
+    before deciding how hard to damp it, instead of penalizing every large
+    file identically.
+    """
+    if is_asset:
+        # content_score is already 0 for an asset-like file (see
+        # _analyze's is_asset branch below) -- the multiplier is moot, but
+        # returning the full penalty keeps this function's contract
+        # ("data-like gets the full penalty") consistent regardless of
+        # call order.
+        return LARGE_FILE_CONTENT_PENALTY
+
+    ext = PurePosixPath(discovered_file.path).suffix.lower()
+
+    if ext == ".py":
+        record = cache.get_record(discovered_file)
+        if record.parse_ok:
+            density = len(record.defs) / (discovered_file.size / 1000)
+            if density >= LARGE_PY_MIN_SYMBOL_DENSITY:
+                return LARGE_SOURCE_CONTENT_PENALTY
+        return LARGE_FILE_CONTENT_PENALTY
+
+    if ext in LARGE_FILE_DATA_EXTENSIONS:
+        return LARGE_FILE_CONTENT_PENALTY
+
+    if ext in LARGE_WEAK_SOURCE_EXTENSIONS and content:
+        lines = content.splitlines() or [content]
+        avg_len = sum(len(line) for line in lines) / len(lines)
+        if avg_len <= LARGE_WEAK_SOURCE_AVG_LINE_LENGTH:
+            return LARGE_WEAK_SOURCE_CONTENT_PENALTY
+
+    return LARGE_FILE_CONTENT_PENALTY
+
+
 def _in_data_path(path: str) -> bool:
     """True when `path` is under a recognizable data/vendor/build
     directory (see discovery.DATA_DIR_SEGMENTS) -- used only to apply
@@ -763,12 +885,15 @@ def _analyze(
                 matched_any = True
                 content_term_counts[t] = count
 
-    # A large file mentioning a term hundreds of times is not hundreds of
-    # times more relevant than a small file mentioning it once -- only the
-    # content-frequency component is damped; filename and symbol matches
-    # (rarer, more deliberate signals) are unaffected by file size.
+    # A large *data* file mentioning a term hundreds of times is not
+    # hundreds of times more relevant than a small file mentioning it
+    # once -- only the content-frequency component is damped; filename and
+    # symbol matches (rarer, more deliberate signals) are unaffected by
+    # file size either way. A large *source* file gets little or no
+    # damping here -- see _large_file_content_penalty() and the tunables
+    # block above LARGE_FILE_CONTENT_PENALTY.
     if discovered_file.size > LARGE_FILE_BYTES:
-        content_score *= LARGE_FILE_CONTENT_PENALTY
+        content_score *= _large_file_content_penalty(discovered_file, content, is_asset, cache)
 
     # Test files describe a feature many times over, once per test case --
     # see TEST_SIGNAL_DAMPING above. Damp symbol and content score (the

@@ -185,6 +185,81 @@ def test_large_file_content_frequency_is_damped(tmp_path):
     assert large_score < small_score * 5
 
 
+def test_large_source_file_with_symbols_still_ranks(tmp_path):
+    """Regression test for the defect this fix addresses: a large *source*
+    file whose content is dense with matching def/class definitions must
+    not be penalized as if it were a data dump merely for being over
+    LARGE_FILE_BYTES. Reproduces the shape of the real bug (selector.py,
+    85,609 bytes, omitted from `octx "the redaction masks ordinary code"`
+    despite implementing redact_text/_redact_line) as a small, fast
+    fixture: a >LARGE_FILE_BYTES .py file with many task-matching defs,
+    padded out with matching prose so its *undamped* content score alone
+    would already clear SCORE_THRESHOLD -- the padding is what the old
+    flat penalty would have crushed.
+    """
+    from opencontextually.selector import (
+        LARGE_FILE_BYTES,
+        SCORE_THRESHOLD,
+        score_file,
+        tokenize,
+    )
+
+    # Many small task-matching function definitions, each on its own line,
+    # so the file parses cleanly and its def-to-size density stays well
+    # above LARGE_PY_MIN_SYMBOL_DENSITY even once padded past
+    # LARGE_FILE_BYTES.
+    defs = "\n".join(f"def redact_widget_{i}():\n    pass\n" for i in range(80))
+    padding = "\n# widget widget widget filler line\n" * 4000
+    content = defs + padding
+    _write(tmp_path / "big_source.py", content)
+
+    discovered, _reasons = discover(tmp_path)
+    big_file = next(f for f in discovered if f.path == "big_source.py")
+    assert big_file.size > LARGE_FILE_BYTES
+
+    terms = tokenize("fix the widget redaction")
+    score = score_file(big_file, terms)
+    assert score > SCORE_THRESHOLD
+
+
+def test_large_data_file_still_demoted_below_source(tmp_path):
+    """The regression this fix must not reintroduce: on a real data-heavy
+    repo, a large data dump (originally a ~700KB benchmark-results JSON)
+    outranked the small source file that actually implemented the task.
+    A large .json file with the same term-matching content as a small,
+    genuinely relevant .py source file must still score lower than that
+    source file -- the LARGE_FILE_CONTENT_PENALTY data path is unaffected
+    by this fix.
+    """
+    import json
+
+    from opencontextually.selector import score_file, tokenize
+
+    entries = [
+        {"name": f"widget_case_{i}", "result": "widget widget handling"}
+        for i in range(4000)
+    ]
+    _write(tmp_path / "benchmark_results.json", json.dumps(entries))
+
+    _write(
+        tmp_path / "widget_handler.py",
+        "def handle_widget():\n"
+        '    """Handle a widget."""\n'
+        "    return widget\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    data_file = next(f for f in discovered if f.path == "benchmark_results.json")
+    source_file = next(f for f in discovered if f.path == "widget_handler.py")
+    assert data_file.size > 50_000
+
+    terms = tokenize("fix the widget handling")
+    data_score = score_file(data_file, terms)
+    source_score = score_file(source_file, terms)
+
+    assert source_score > data_score
+
+
 def test_select_caps_at_max_seeds(tmp_path):
     from opencontextually.selector import MAX_SEEDS
 
