@@ -1616,6 +1616,7 @@ def attach_excerpts(
     discovered: list[DiscoveredFile],
     task: str,
     cache: RunCache | None = None,
+    evicted_paths: set[str] | None = None,
 ) -> int:
     """Populate `item.excerpts` on every item with the bounded, redacted
     spans that justified its inclusion, then enforce the package-wide
@@ -1692,13 +1693,20 @@ def attach_excerpts(
             content, weighted_spans, is_config=_is_config_format_file(discovered_file.path)
         )
 
-    return _enforce_package_excerpt_budget(items)
+    return _enforce_package_excerpt_budget(items, evicted_paths)
 
 
-def _enforce_package_excerpt_budget(items: list[ContextItem]) -> int:
+def _enforce_package_excerpt_budget(
+    items: list[ContextItem],
+    evicted_paths: set[str] | None = None,
+) -> int:
     """If total excerpt bytes across `items` exceeds MAX_PACKAGE_BYTES,
     drop whole excerpts -- lowest item score first -- until it does not.
-    Returns the number of excerpts dropped.
+    Returns the number of excerpts dropped, and records into
+    `evicted_paths` the path of every item that lost one, so a caller can
+    distinguish a genuine budget eviction from a file the extractor found
+    nothing quotable in -- two very different facts that were previously
+    reported identically.
     """
     entries: list[tuple[ContextItem, Excerpt, int]] = []
     total = 0
@@ -1723,6 +1731,8 @@ def _enforce_package_excerpt_budget(items: list[ContextItem]) -> int:
         remaining -= size
 
     for item in items:
+        if evicted_paths is not None and any(id(e) in to_drop_ids for e in item.excerpts):
+            evicted_paths.add(item.path)
         item.excerpts = [e for e in item.excerpts if id(e) not in to_drop_ids]
 
     return len(to_drop_ids)

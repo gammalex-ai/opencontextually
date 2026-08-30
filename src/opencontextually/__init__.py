@@ -40,7 +40,10 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
 
     discovered, excluded_by_reason = discover(root_path)
     items, extra_exclusions, selection_stats = select(discovered, task, cache)
-    excerpts_dropped_over_budget = attach_excerpts(items, discovered, task, cache)
+    evicted_item_paths: set[str] = set()
+    excerpts_dropped_over_budget = attach_excerpts(
+        items, discovered, task, cache, evicted_item_paths
+    )
 
     # An item whose excerpts were all evicted by the package-wide budget
     # is no longer a usable inclusion -- it has a reason but nothing to
@@ -50,7 +53,15 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
     # "included" set that render()/to_dict() will actually report --
     # otherwise a fully-evicted selection could still produce findings
     # underneath a "No relevant context found" message.
+    # Distinguish *why* an item has no excerpts. Folding both causes into
+    # "over_budget" made the footer state "ran out of room in the excerpt
+    # budget" on a run using 4% of it -- a confident falsehood about the
+    # tool's own behaviour. Only genuine eviction is a budget problem;
+    # a file the extractor found nothing quotable in is a different fact.
     fully_evicted = [item for item in items if not item.excerpts]
+    evicted_paths = evicted_item_paths if evicted_item_paths is not None else set()
+    budget_evicted = [i for i in fully_evicted if i.path in evicted_paths]
+    no_excerptable = [i for i in fully_evicted if i.path not in evicted_paths]
     items = [item for item in items if item.excerpts]
 
     # WEAK SIGNAL: something cleared SCORE_THRESHOLD, but for a multi-term
@@ -107,11 +118,13 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
 
     excluded_by_reason = dict(excluded_by_reason)
     excluded_by_reason.update(extra_exclusions)
-    excluded_by_reason["over_budget"] = excluded_by_reason.get("over_budget", 0) + len(fully_evicted)
+    excluded_by_reason["over_budget"] = excluded_by_reason.get("over_budget", 0) + len(budget_evicted)
+    excluded_by_reason["no_excerpt"] = excluded_by_reason.get("no_excerpt", 0) + len(no_excerptable)
     # Every run reports the full bucket set, even when a bucket is zero,
     # so the exclusion summary is always the same six keys.
     for key in (
         "ignored", "binary", "oversize", "duplicate", "below_threshold", "over_cap", "over_budget",
+        "no_excerpt",
     ):
         excluded_by_reason.setdefault(key, 0)
     excluded_count = sum(excluded_by_reason.values())

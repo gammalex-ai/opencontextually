@@ -110,6 +110,12 @@ _EXCLUSION_LABELS: dict[str, tuple[str, str]] = {
     "below_threshold": ("below the relevance bar", "not_relevant"),
     "over_cap": ("the result list was already full", "dropped"),
     "over_budget": ("ran out of room in the excerpt budget", "dropped"),
+    # Not a budget problem and not a relevance judgement: the file was
+    # selected, but the extractor found no span worth quoting from it.
+    # Reported as its own plain fact rather than borrowing the budget's
+    # wording, which previously claimed the budget was exhausted on runs
+    # using a few percent of it.
+    "no_excerpt": ("nothing quotable to show", "no_excerpt"),
 }
 
 
@@ -440,6 +446,7 @@ class ContextPackage:
 
         not_scanned_counts: list[tuple[str, int]] = []
         not_relevant_total = 0
+        no_excerpt_total = 0
         dropped_counts: list[tuple[str, int]] = []
 
         for key, count in sorted(self.excluded_by_reason.items()):
@@ -450,6 +457,8 @@ class ContextPackage:
                 not_scanned_counts.append((label, count))
             elif category == "not_relevant":
                 not_relevant_total += count
+            elif category == "no_excerpt":
+                no_excerpt_total += count
             elif category == "dropped":
                 dropped_counts.append((label, count))
 
@@ -463,6 +472,11 @@ class ContextPackage:
             noun = "file" if total == 1 else "files"
             detail = _join_category_detail(dropped_counts, total)
             lines.append(f"  {glyphs.WARN} {total} relevant {noun} dropped -- {detail}")
+        if no_excerpt_total:
+            noun = "file" if no_excerpt_total == 1 else "files"
+            lines.append(
+                f"  {no_excerpt_total} relevant {noun} with nothing quotable to show"
+            )
         if not_relevant_total:
             noun = "file" if not_relevant_total == 1 else "files"
             lines.append(f"  {not_relevant_total} {noun} scanned, not relevant enough")

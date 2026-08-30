@@ -155,3 +155,33 @@ def test_exclusion_summary_is_presentation_only():
     package = ContextPackage(task="anything", excluded_count=74, excluded_by_reason=dict(reasons))
     package.render()  # rendering must not mutate the underlying data
     assert package.to_dict()["excluded_by_reason"] == reasons
+
+
+def test_no_excerpt_is_not_reported_as_a_budget_eviction():
+    """A file with nothing quotable must not claim the budget was exhausted.
+
+    Both causes were once folded into `over_budget`, so a run using ~4% of
+    the excerpt budget still told the user that relevant files were dropped
+    because it "ran out of room" -- a confident falsehood about the tool's
+    own behaviour, and the kind a user cannot check.
+    """
+    package = ContextPackage(
+        task="t",
+        included=[],
+        excluded_count=2,
+        excluded_by_reason={"no_excerpt": 2, "over_budget": 0},
+    )
+    rendered = package.render()
+    assert "ran out of room" not in rendered
+    assert "nothing quotable to show" in rendered
+
+
+def test_real_budget_eviction_is_still_reported_as_dropped():
+    package = ContextPackage(
+        task="t",
+        included=[],
+        excluded_count=1,
+        excluded_by_reason={"over_budget": 1},
+    )
+    rendered = package.render()
+    assert "ran out of room" in rendered
