@@ -74,6 +74,10 @@ jobs:
 
   github-release:
     needs: publish
+    # softprops/action-gh-release needs a tag ref to attach to. A
+    # workflow_dispatch run (used for one-off/manual publishes) has none --
+    # only a tag push does.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write

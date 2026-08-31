@@ -1,6 +1,7 @@
 # OpenContextually
 
 [![Tests](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml/badge.svg)](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/opencontextually.svg)](https://pypi.org/project/opencontextually/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -18,14 +19,10 @@ open context layer *before* the agent.
 ## Quickstart
 
 ```bash
-pip install git+https://github.com/gammalex-ai/opencontextually
+pip install opencontextually
 
 gctx "fix the authentication bug"
 ```
-
-> Not on PyPI yet. When the first release lands this becomes
-> `pip install opencontextually`; until then the line above is the one that
-> works. Python 3.10+, one runtime dependency.
 
 **No model. No API key. No network. No database. No setup.** One dependency.
 The same repository and task produce byte-identical output every time.
@@ -121,12 +118,10 @@ below.
 ## Install
 
 ```bash
-pip install git+https://github.com/gammalex-ai/opencontextually
+pip install opencontextually
 ```
 
-Python 3.10+, one runtime dependency. PyPI release pending — this becomes
-`pip install opencontextually` once it is published. To work on
-OpenContextually itself:
+Python 3.10+, one runtime dependency. To work on OpenContextually itself:
 
 ```bash
 git clone https://github.com/gammalex-ai/opencontextually
@@ -170,8 +165,8 @@ package.to_dict()           # the same content as JSON
 Agents that speak [MCP](https://modelcontextprotocol.io) can call it
 directly. Requires the optional extra:
 
-```
-pip install -e ".[mcp]"
+```bash
+pip install "opencontextually[mcp]"
 ```
 
 Point your MCP client at the `opencontextually-mcp` command:
