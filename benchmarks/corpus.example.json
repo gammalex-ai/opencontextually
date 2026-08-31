@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Copy to corpus.local.json (gitignored) and point `root` at clones on your",
+    "own disk. Paths are never committed: a corpus is personal to whoever runs",
+    "it, and some useful repositories are private.",
+    "",
+    "Pick tasks the way a developer actually types them -- a symptom or a",
+    "behaviour, not a directory name. Include at least one task whose words",
+    "collide with the repo's own naming convention; that is the known-weak",
+    "case (see README, 'Ranking is not always right') and it is the one most",
+    "likely to regress unnoticed."
+  ],
+  "repos": [
+    {
+      "root": "~/src/flask",
+      "tasks": [
+        "session cookie is not set on redirect",
+        "blueprint url_prefix is ignored"
+      ]
+    },
+    {
+      "root": "~/src/django",
+      "tasks": [
+        "queryset filter drops the second condition",
+        "CSRF token rejected after login"
+      ]
+    },
+    {
+      "root": "~/src/sqlfluff",
+      "tasks": ["indentation rule fires on a templated line"]
+    }
+  ]
+}
