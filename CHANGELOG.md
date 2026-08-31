@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] - 2026-08-31
+
+### Fixed
+
+- **PyPI's project page told visitors to install a package they were
+  already looking at on PyPI from GitHub.** 0.2.0 was published from a
+  README written before the first PyPI release existed, so its "Not on
+  PyPI yet" caveat and `pip install git+https://...` instructions shipped
+  as the package's PyPI description verbatim. PyPI does not allow
+  re-uploading files for an already-published version, so this release
+  exists to carry the corrected README — no code changes.
+
 ## [0.2.0] - 2026-08-31
 
 ### Changed
