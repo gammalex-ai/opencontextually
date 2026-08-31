@@ -8,3 +8,6 @@ build/
 
 # Local dogfood corpus: repository paths are personal (and sometimes private).
 benchmarks/corpus.local.json
+
+# Local Claude Code settings (machine-specific, never committed).
+.claude/
