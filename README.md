@@ -2,24 +2,26 @@
 
 [![Tests](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml/badge.svg)](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml)
 
-**Describe a task. Get the files that actually matter, each with a reason.**
+**Give your coding agent the context it should read before it starts working.**
 
-A fast, offline, deterministic second opinion on what to read before you
-touch a task — including files that mention none of your words but are
-reachable through the codebase's own Python imports.
+OpenContextually turns a task into a small, ranked, explainable context
+package from your repository. It is not another coding agent — it is the
+context layer before the agent.
 
-No LLM, no API key, no network, no database, no config file. One
-dependency.
-
-## Install
-
+```mermaid
+flowchart LR
+    A["Your task<br/><b>fix the authentication bug</b>"] --> B["SELECT<br/>find likely context"]
+    B --> C["FOLLOW<br/>traverse code relationships"]
+    C --> D["BOUND<br/>keep what's useful"]
+    D --> E["CHECK<br/>surface gaps and conflicts"]
+    E --> F["EXPLAIN<br/>show why each file is here"]
+    F --> G["Task-ready context<br/>for you or your agent"]
 ```
-pip install -e .
-```
 
-Not yet on PyPI, so install from a clone. Python 3.10+.
+**No model. No API key. No network. No database. No setup.** One dependency.
+The same repository and task produce byte-identical output every time.
 
-## Quick start
+## What it looks like
 
 ```
 octx "fix the authentication bug"
@@ -51,16 +53,59 @@ Excluded: 21 files
 Checks run: configuration_discrepancy, test_reference_gap
 ```
 
-Three things happened there beyond ranking:
+Three things happened beyond ranking:
 
-- **`session.py` was found through an import**, not through text. It
-  matches none of the task's words; `middleware.py` imports it, and the
-  `← via` marker shows that edge.
-- **A config/doc disagreement was flagged** — 60 minutes vs 30.
-- **Every file carries a reason**, and everything excluded is counted.
+- **`session.py` was reached through an import, not through text.** It
+  matches none of the task's words. `middleware.py` imports it, and the
+  `← via` marker records that edge.
+- **A config/doc disagreement was surfaced** — 60 minutes against 30.
+- **Every file carries a reason,** and everything excluded is accounted for.
 
-Write tasks the way you'd describe the bug — a behavior or a symptom.
-Naming a specific symbol or behavior beats a directory-shaped noun.
+## Search finds matches. Context needs relationships.
+
+Search answers *"where do these words occur?"*. That is a different
+question from *"what should be read for this task?"*.
+
+```
+grep / ripgrep
+
+  task ──────────────────►  keyword matches
+
+
+OpenContextually
+
+  task ──►  direct matches
+                 │
+                 ├──►  imported dependencies
+                 ├──►  tests that exercise them
+                 ├──►  relevant configuration
+                 └──►  governing documentation
+                              │
+                              ▼
+                     bounded context package
+```
+
+A task like `fix the authentication bug` can require a file that never
+contains the words *authentication* or *bug*. OpenContextually starts from
+direct relevance, follows Python's own import graph, applies repository
+boundaries, runs two narrow deterministic checks, and explains every
+inclusion.
+
+Be honest about the split: relationship-following is the part search cannot
+do at all, but most of the value on a typical run is ranking and
+compression of files search *could* have found. Asking sqlfluff about
+*"indentation rule fires on a templated line"*, a case-insensitive grep for
+any of the task's words matches **415 files**; OpenContextually returns
+**12**, each with a reason. Both numbers are reproducible from the corpus
+below.
+
+## Install
+
+```
+pip install -e .
+```
+
+Not yet on PyPI, so install from a clone. Python 3.10+.
 
 ## Using it
 
@@ -76,6 +121,9 @@ Naming a specific symbol or behavior beats a directory-shaped noun.
 
 `opencontextually` is a longer alias for `octx`. Flags compose (`-v --all`).
 `--json` is unaffected by `-v`/`--all` — it is always full fidelity.
+
+Write tasks the way you'd describe the bug. Naming a specific behavior or
+symbol beats a directory-shaped noun.
 
 ### Python
 
@@ -112,60 +160,59 @@ Point your MCP client at the `opencontextually-mcp` command:
 It exposes exactly one tool — `get_context(task, root=".")` — returning the
 same shape as `octx --json`.
 
-## What it reads
+## Tested on real repositories
 
-Every file under `--root`, minus what git already ignores. Discovery
-honors nested `.gitignore` files, `.git/info/exclude`, and the global
-`core.excludesFile`, plus an optional `.opencontextuallyignore` — resolved
-without shelling out to git, so it also works in a directory that isn't a
-repository at all.
+Scripted tests lock in fixes; they do not find them. Most real defects in
+this project were found by running it against unfamiliar repositories and
+reading the output, so a standing corpus is part of the project
+(`benchmarks/`, with a runner that also checks determinism and sweeps for
+leaked secrets).
 
-Excerpts pass through a redactor that masks secret-shaped keys and
-high-entropy strings before they leave a file. This is best-effort pattern
-matching, not a secrets scanner — see [SECURITY.md](SECURITY.md).
+Measured against public Python projects with different layouts and
+documentation conventions:
 
-Scale: a 42,000-file repository completes in about two seconds; a typical
-project is well under one. Repeat runs are byte-identical.
+| Repository | Files | Time | Included | Secrets leaked |
+| --- | --- | --- | --- | --- |
+| [click](https://github.com/pallets/click) | 166 | 0.23s | 18 | 0 |
+| [flask](https://github.com/pallets/flask) | 236 | 0.17s | 18 | 0 |
+| [sqlfluff](https://github.com/sqlfluff/sqlfluff) | 5,955 | 1.72s | 12 | 0 |
 
-## Why not just grep
+Larger private repositories in the corpus run ~42,000 files in about two
+seconds.
 
-Because some of the files you need don't contain your words.
+For `octx "option prompt does not hide the input"` against click, the top
+three are `core.py` (*defines Option*), `decorators.py` (*defines option*),
+and `termui.py` (*defines `_mask_hidden_input`*) — the third being a private
+helper whose name no part of the task literally matches.
 
-Testing against [yenklabs/Dali](https://github.com/yenklabs/Dali), the task
-*"citation verification returns wrong confidence score"* surfaced
-`dali/scoring/existence.py` — a file with zero occurrences of "citation" or
-"confidence". It was reached because `verification.py`, which does match,
-contains:
+## What it deliberately does not do
 
-```python
-from dali.scoring.existence import score_existence
-```
-
-and `score_existence` computes the score being asked about. No text search
-can get there; the import is the only path, and `provenance` records that
-edge so the reason isn't "trust me".
-
-Honestly, that's the minority of the value. Most runs are ranking and
-compression of files grep *could* have found — one took 147 unranked grep
-hits down to 12 ranked files — just sorted, explained, and bounded.
-
-## What it won't do
-
-- **Follow imports outside Python.** Import expansion uses the stdlib
-  `ast` module. Other languages get lexical matching only.
+- **Follow imports outside Python.** Expansion uses the stdlib `ast`
+  module; other languages get lexical matching only.
 - **Understand your code.** Ranking is lexical scoring plus import
   expansion. It is weakest when your task's words are also the repo's
-  naming convention — asking about "the context agent" where many files
-  are named `*context*` — because filename matches then dominate. A
-  rarity weight damps this but does not eliminate it.
+  naming convention — asking about "the context agent" where many files are
+  named `*context*` — because filename matches then dominate.
 - **Find problems for you.** The two checks are narrow, named rules that
-  expect to stay quiet. `configuration_discrepancy` compares a scalar
-  config value against a doc; `test_reference_gap` reports terms no test
-  references. Across eleven real repositories one produced a false
-  positive — since fixed — which is the honest measure of how much
-  "high precision" has actually been tested. Silence is the normal
-  outcome; a footer always names which checks ran.
-- **Guarantee secrets stay out of excerpts.** See "What it reads" above.
+  expect to stay quiet. Across eleven real repositories, one produced a
+  false positive (since fixed) — the honest measure of how much "high
+  precision" has actually been tested. Silence is the normal outcome; a
+  footer always names which checks ran.
+- **Guarantee secrets stay out of excerpts.** Redaction masks
+  secret-shaped keys and high-entropy strings, but it is best-effort
+  pattern matching, not a secrets scanner. See [SECURITY.md](SECURITY.md).
+
+## Scope, determinism, and safety
+
+Discovery reads everything under `--root` minus what git already ignores —
+honoring nested `.gitignore` files, `.git/info/exclude`, and the global
+`core.excludesFile`, plus an optional `.opencontextuallyignore`. All
+resolved without shelling out to git, so it works in directories that
+aren't repositories at all.
+
+Runs are deterministic: the same task and repository produce byte-identical
+output, which is asserted in the test suite and re-checked by the corpus
+runner. Nothing is written anywhere, and no network call is ever made.
 
 ## License
 
