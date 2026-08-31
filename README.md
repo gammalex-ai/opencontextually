@@ -28,14 +28,15 @@ gctx "fix the authentication bug"
 **No model. No API key. No network. No database. No setup.** One dependency.
 The same repository and task produce byte-identical output every time.
 
-```mermaid
-flowchart TB
-    T(["your task<br/>fix the authentication bug"]) --> OC
-    subgraph OC ["OpenContextually · local · deterministic · no model"]
-      direction LR
-      S["SELECT<br/>likely files"] --> F["FOLLOW<br/>imports"] --> B["BOUND<br/>repo limits"] --> C["CHECK<br/>gaps + conflicts"] --> E["EXPLAIN<br/>why each file"]
-    end
-    OC --> R(["task-ready context<br/>every file with a reason"])
+```text
+"fix the authentication bug"
+            │
+            ▼
+  SELECT → FOLLOW → BOUND → CHECK → EXPLAIN
+            │
+            ▼
+      task-ready context
+      every file with a reason
 ```
 
 ## What it looks like
