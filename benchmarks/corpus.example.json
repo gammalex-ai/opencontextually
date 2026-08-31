@@ -1,33 +1,86 @@
 {
   "_comment": [
-    "Copy to corpus.local.json (gitignored) and point `root` at clones on your",
-    "own disk. Paths are never committed: a corpus is personal to whoever runs",
-    "it, and some useful repositories are private.",
+    "Copy to corpus.local.json (gitignored) and point `root` at clones on your own disk.",
+    "Paths are never committed: a corpus is personal to whoever runs it, and some",
+    "useful repositories are private.",
     "",
-    "Pick tasks the way a developer actually types them -- a symptom or a",
-    "behaviour, not a directory name. Include at least one task whose words",
-    "collide with the repo's own naming convention; that is the known-weak",
-    "case (see README, 'Ranking is not always right') and it is the one most",
-    "likely to regress unnoticed."
+    "These ten are the public corpus quoted in the README. Clone them with",
+    "  git clone --depth 1 https://github.com/<slug>.git",
+    "",
+    "Tasks are phrased as a developer would describe the symptom. Keep at least one",
+    "whose words collide with the repo's own naming convention -- that is the known",
+    "weak case (see README, 'What it deliberately does not do')."
   ],
   "repos": [
     {
-      "root": "~/src/flask",
+      "root": "~/src/httpx",
+      "github": "encode/httpx",
       "tasks": [
-        "session cookie is not set on redirect",
-        "blueprint url_prefix is ignored"
+        "redirect loses the authorization header"
       ]
     },
     {
-      "root": "~/src/django",
+      "root": "~/src/requests",
+      "github": "psf/requests",
       "tasks": [
-        "queryset filter drops the second condition",
-        "CSRF token rejected after login"
+        "session cookie persists across redirects"
+      ]
+    },
+    {
+      "root": "~/src/click",
+      "github": "pallets/click",
+      "tasks": [
+        "option prompt does not hide the input"
+      ]
+    },
+    {
+      "root": "~/src/flask",
+      "github": "pallets/flask",
+      "tasks": [
+        "session cookie is not set on redirect"
+      ]
+    },
+    {
+      "root": "~/src/black",
+      "github": "psf/black",
+      "tasks": [
+        "string normalization changes the wrong quotes"
+      ]
+    },
+    {
+      "root": "~/src/rich",
+      "github": "Textualize/rich",
+      "tasks": [
+        "table column width ignores the terminal size"
+      ]
+    },
+    {
+      "root": "~/src/pydantic",
+      "github": "pydantic/pydantic",
+      "tasks": [
+        "field validator not called on assignment"
+      ]
+    },
+    {
+      "root": "~/src/fastapi",
+      "github": "fastapi/fastapi",
+      "tasks": [
+        "dependency override not applied in nested routers"
       ]
     },
     {
       "root": "~/src/sqlfluff",
-      "tasks": ["indentation rule fires on a templated line"]
+      "github": "sqlfluff/sqlfluff",
+      "tasks": [
+        "indentation rule fires on a templated line"
+      ]
+    },
+    {
+      "root": "~/src/django",
+      "github": "django/django",
+      "tasks": [
+        "queryset filter drops the second condition"
+      ]
     }
   ]
 }

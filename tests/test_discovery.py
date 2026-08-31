@@ -390,3 +390,51 @@ def test_role_classification(tmp_path):
     assert roles["tests/test_app.py"] == "test"
     assert roles["config/settings.yaml"] == "config"
     assert roles["docs/guide.md"] == "docs"
+
+
+# --- bug fix: an invalid .gitignore pattern crashed the whole run ---------
+#
+# Found by running against psf/black, which ships
+# `tests/data/invalid_gitignore_tests/.gitignore` containing a single `!`
+# line (plus a nested variant) as fixtures for its own handling of malformed
+# ignore files. `pathspec` raises GitIgnorePatternError("Invalid git pattern:
+# '!'") for that line, and discover() let the exception escape -- so
+# get_context() crashed outright with a traceback on a repository that
+# `git status` is perfectly happy with.
+#
+# Git tolerates these lines; so must we. Discovery must never fail because of
+# what a repository happens to contain -- an unreadable ignore rule is a
+# reason to skip that rule, not to refuse to look at the project. The fix
+# skips only the offending line and keeps every other pattern in the file,
+# rather than discarding the whole file's rules (which would silently
+# un-ignore directories the file legitimately excluded).
+
+
+def test_invalid_root_gitignore_pattern_does_not_crash(tmp_path):
+    (tmp_path / ".gitignore").write_text("!\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    discovered, _reasons = discover(tmp_path)
+    assert "app.py" in {f.path for f in discovered}
+
+
+def test_invalid_nested_gitignore_pattern_does_not_crash(tmp_path):
+    nested = tmp_path / "a"
+    nested.mkdir()
+    (nested / ".gitignore").write_text("!\n")
+    (nested / "app.py").write_text("x = 1\n")
+    discovered, _reasons = discover(tmp_path)
+    assert "a/app.py" in {f.path for f in discovered}
+
+
+def test_valid_patterns_survive_alongside_an_invalid_one(tmp_path):
+    """One bad line must not discard the rest of the file's rules -- that
+    would silently un-ignore whatever the valid patterns excluded.
+    """
+    (tmp_path / ".gitignore").write_text("!\nsecrets.txt\n")
+    (tmp_path / "secrets.txt").write_text("token\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    discovered, reasons = discover(tmp_path)
+    paths = {f.path for f in discovered}
+    assert "app.py" in paths
+    assert "secrets.txt" not in paths, "the valid ignore rule was dropped too"
+    assert reasons["ignored"] >= 1

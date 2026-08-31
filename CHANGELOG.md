@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Discovery no longer crashes on an ignore pattern `pathspec` rejects.** A
+  `.gitignore` containing a bare `!` line — which `git status` reads without
+  complaint — raised `GitIgnorePatternError` out of `discover()`, so
+  `get_context()` died with a traceback on any repository containing one.
+  Found by running against psf/black, which ships two such files as fixtures
+  for its own handling of them. Only the offending line is skipped now; the
+  file's remaining patterns still apply, so nothing it legitimately excluded
+  becomes visible.
 - `configuration_discrepancy` no longer reads JSON/YAML **test fixtures as
   project configuration**. Directory names were matched whole, so `fixtures/`
   was recognized as test data but `demo_fixtures/` was not. Found on a real
