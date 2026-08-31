@@ -448,3 +448,67 @@ def test_cli_exits_0_and_prints_render_on_good_root(tmp_path):
     assert result.returncode == 0
     assert "auth.py" in result.stdout
     assert "fix the auth bug" in result.stdout
+
+
+def test_changelog_is_damped_against_a_current_behaviour_task(tmp_path):
+    # A changelog names every feature ever shipped, so it matches almost
+    # any task's vocabulary. It must not outrank the code that implements
+    # the behaviour now -- see HISTORY_DOC_PENALTY.
+    _write(
+        tmp_path / "CHANGELOG.md",
+        "# Changelog\n\n"
+        "## 1.2.0\n- redirect now preserves the authorization header\n"
+        "## 1.1.0\n- redirect handling reworked; authorization header fixes\n"
+        "## 1.0.0\n- initial redirect support, authorization header support\n",
+    )
+    _write(
+        tmp_path / "client.py",
+        "class Client:\n"
+        "    def build_redirect_request(self, request):\n"
+        "        return self.redirect_headers(request)\n"
+        "    def redirect_headers(self, request):\n"
+        "        # drop the authorization header on a cross-origin redirect\n"
+        "        return request.headers\n"
+        "    def is_redirect(self, response):\n"
+        "        return response.status_code in (301, 302)\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "redirect loses the authorization header")
+
+    ranked = [item.path for item in items]
+    assert ranked.index("client.py") < ranked.index("CHANGELOG.md")
+
+
+def test_release_notes_directory_is_damped_too(tmp_path):
+    _write(tmp_path / "docs" / "releases" / "5.0.txt", "redirect handling changed\n" * 20)
+    _write(
+        tmp_path / "handler.py",
+        "def build_redirect():\n"
+        "    return handle_redirect()\n"
+        "def handle_redirect():\n"
+        "    return None\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "redirect handling")
+
+    ranked = [item.path for item in items]
+    assert ranked.index("handler.py") < ranked.index("docs/releases/5.0.txt")
+
+
+def test_a_changelog_still_ranks_when_nothing_else_matches(tmp_path):
+    # Damped, not excluded: when the changelog is the only thing in the
+    # repository that speaks to the task, it is still a real answer.
+    _write(
+        tmp_path / "CHANGELOG.md",
+        "# Changelog\n\n"
+        "## 2.0.0\n- dropped support for the legacy telemetry endpoint\n"
+        "- the legacy telemetry endpoint is gone; use the telemetry sink\n",
+    )
+    _write(tmp_path / "unrelated.py", "def add(a, b):\n    return a + b\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "legacy telemetry endpoint removed")
+
+    assert "CHANGELOG.md" in [item.path for item in items]
