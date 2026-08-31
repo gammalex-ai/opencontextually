@@ -1,35 +1,69 @@
-"""The README's flagship example must be the tool's real output.
+"""The README's flagship example must stay internally consistent.
 
-The README opens with `gctx "fix the authentication bug"` run against
-`examples/auth_bug/`, presented as "the real, unedited output". It drifted:
-the exclusion-summary rewrite changed that footer, and the README kept the
-old one-line `below_threshold=21, binary=0, ...` form for several releases.
-The very first command a new user runs then disagreed with the page that
-told them to run it.
+The "What it looks like" section shows real `gctx` output from a clone of
+fastapi/fastapi at a pinned commit, presented as "the real, unedited
+output". Earlier this was a local fixture under `examples/auth_bug/`, and a
+test regenerated that render and compared it against the README verbatim --
+see git history. That approach doesn't extend to an external repository: the
+corpus repos aren't committed (`benchmarks/fetch-corpus.sh` clones them on
+demand), so nothing in this repo can regenerate that exact render offline or
+in CI.
 
-This test regenerates the render and asserts the README still contains it
-verbatim, so the block cannot silently go stale again. `width` is pinned
-so the assertion does not depend on the terminal running the tests.
+Short of that, this test checks the block's own arithmetic instead: the
+visible file count plus "+N more" must equal the headline "relevant" count,
+and the exclusion buckets must sum to the headline "excluded" count. A hand
+edit that changes one number without the others -- the way the old fixture
+example drifted -- fails this test.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from opencontextually import get_context
-
 REPO_ROOT = Path(__file__).parent.parent
-FIXTURE_ROOT = REPO_ROOT / "examples" / "auth_bug"
 README = REPO_ROOT / "README.md"
-TASK = "fix the authentication bug"
-RENDER_WIDTH = 100
+
+HEADLINE_RE = re.compile(r"(?P<relevant>\d+) relevant · (?P<excluded>\d+) excluded")
+MORE_RE = re.compile(r"\+(?P<more>\d+) more")
+DROPPED_RE = re.compile(r"⚠ (?P<dropped>\d+) relevant files dropped")
+SCANNED_RE = re.compile(r"(?P<scanned>\d+) files scanned, not relevant enough")
+NOT_SCANNED_RE = re.compile(r"(?P<not_scanned>\d+) files not scanned")
 
 
-def test_readme_shows_the_real_compact_output():
-    rendered = get_context(TASK, root=FIXTURE_ROOT).render(width=RENDER_WIDTH)
+def _example_block() -> str:
     readme = README.read_text()
-    assert rendered in readme, (
-        "The README's example block is stale. Replace it with:\n\n" + rendered
+    # Two fenced blocks follow the heading: the invocation, then the output.
+    matches = list(re.finditer(r"```\n(.*?)```", readme[readme.index("## What it looks like"):], re.DOTALL))
+    assert len(matches) >= 2, "expected an invocation block and an output block"
+    return matches[1].group(1)
+
+
+def test_readme_example_counts_are_internally_consistent():
+    output = _example_block()
+
+    headline = HEADLINE_RE.search(output)
+    assert headline, "README example is missing the 'N relevant · N excluded' headline"
+    relevant = int(headline.group("relevant"))
+    excluded = int(headline.group("excluded"))
+
+    included_section = output.split("\nExcluded:")[0]
+    shown_paths = [
+        line.strip().split("  ")[0]
+        for line in included_section.splitlines()
+        if line.startswith("  ") and line.strip() and not line.strip().startswith("+")
+    ]
+    more = MORE_RE.search(output)
+    more_count = int(more.group("more")) if more else 0
+    assert len(shown_paths) + more_count == relevant, (
+        f"{len(shown_paths)} shown + {more_count} more != {relevant} relevant"
+    )
+
+    dropped = int(DROPPED_RE.search(output).group("dropped"))
+    scanned = int(SCANNED_RE.search(output).group("scanned"))
+    not_scanned = int(NOT_SCANNED_RE.search(output).group("not_scanned"))
+    assert dropped + scanned + not_scanned == excluded, (
+        f"{dropped} dropped + {scanned} scanned + {not_scanned} not scanned != {excluded} excluded"
     )
 
 

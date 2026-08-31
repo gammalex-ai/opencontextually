@@ -42,42 +42,50 @@ The same repository and task produce byte-identical output every time.
 ## What it looks like
 
 ```
-gctx "fix the authentication bug"
+gctx "dependency override not applied in nested routers"
 ```
 
-Run from `examples/auth_bug/` — a small fixture with an auth module, a
-config file, docs, and a test — this is the real, unedited output:
+Run from a clone of [fastapi/fastapi](https://github.com/fastapi/fastapi) at
+[`49033471`](https://github.com/fastapi/fastapi/commit/49033471594e) — 3,139
+files, no fixture — this is the real, unedited output:
 
 ```
-fix the authentication bug
-6 relevant · 19 excluded
+dependency override not applied in nested routers
+18 relevant · 3121 excluded
 
-  src/auth/middleware.py  defines AuthenticationError
-  README.md               defines authentication requirements
-  tests/test_auth.py      imports middleware.py  ← via middleware.py
-  config/auth.yaml        configuration referenced by authentication code
-  docs/security.md        defines authentication requirements
-  src/users/session.py    imported by middleware.py  ← via middleware.py
+  fastapi/routing.py                             defines _frontend_dependency_endpoint
+  fastapi/applications.py                        references applied
+  tests/test_frontend.py                         defines record_dependency
+  tests/test_dependency_overrides.py             filename matches 'dependency'
+  tests/test_dependency_wrapped.py               filename matches 'dependency'
+  docs/hi/docs/advanced/testing-dependencies.md  defines dependency requirements
+  docs/en/docs/advanced/testing-dependencies.md  defines dependency requirements
+  docs/tr/docs/advanced/testing-dependencies.md  defines dependency requirements
 
-  ⚠ session.timeout_minutes: config/auth.yaml:3 declares 60 minutes, but docs/security.md:6 says 30 minutes
-  ○ No test references session timeout minutes (config/auth.yaml:3)
-  ○ No test references session expired (src/users/session.py:67)
+  +10 more  ·  --all to list  ·  -v for code excerpts
 
-  -v for code excerpts
-
-Excluded: 19 files
-  19 files scanned, not relevant enough
+Excluded: 3121 files
+  ⚠ 205 relevant files dropped -- the result list was already full
+  2715 files scanned, not relevant enough
+  201 files not scanned (187 binary, 7 exact duplicate of another file, 7 too large to scan)
 
 Checks run: configuration_discrepancy, test_reference_gap
 ```
 
 Three things happened beyond ranking:
 
-- **`session.py` was reached through an import, not through text.** It
-  matches none of the task's words. `middleware.py` imports it, and the
-  `← via` marker records that edge.
-- **A config/doc disagreement was surfaced** — 60 minutes against 30.
-- **Every file carries a reason,** and everything excluded is accounted for.
+- **Two of the ten hidden matches were reached through imports, not
+  text.** `--all` shows `fastapi/openapi/utils.py` and
+  `fastapi/exceptions.py`, each marked `← via routing.py` — pulled in
+  because `routing.py`, the file that actually implements dependency
+  overrides, imports one and is imported by the other.
+- **A translated page was included three times over, correctly.**
+  `testing-dependencies.md` exists separately under `docs/en`, `docs/hi`,
+  and `docs/tr`; each copy documents the same behaviour in its own
+  language, so each is included on its own merits.
+- **Every file carries a reason, and everything excluded is accounted
+  for** — including the 205 files that scored as relevant but didn't fit
+  the result budget.
 
 ## Try it on something real
 
