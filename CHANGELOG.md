@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.2] - 2026-08-31
+
+### Fixed
+
+- **The README's pipeline diagram was unreadable on PyPI.** It was a
+  `mermaid`-fenced block, which GitHub renders as a diagram but PyPI's
+  renderer does not — visitors to the PyPI project page saw the raw
+  flowchart source as a code block instead. Replaced with a plain-text
+  box diagram that renders identically on GitHub, PyPI, terminals, and
+  anywhere else the README is read.
+
 ## [0.2.1] - 2026-08-31
 
 ### Fixed
