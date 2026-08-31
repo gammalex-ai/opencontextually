@@ -1,5 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Questions & discussion
+  - name: Discord
+    url: DISCORD_INVITE_URL
+    about: Questions, ideas in progress, and showing what you built.
+  - name: GitHub Discussions
     url: https://github.com/gammalex-ai/opencontextually/discussions
-    about: Ask questions and discuss ideas here rather than in an issue.
+    about: Anything worth being searchable later — questions, proposals, design debate.
+  - name: An agent read the wrong context
+    url: https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml
+    about: The most useful report you can file here. No reproduction required.
+  - name: Security issue
+    url: https://github.com/gammalex-ai/opencontextually/blob/main/SECURITY.md
+    about: Please report privately, not as a public issue.

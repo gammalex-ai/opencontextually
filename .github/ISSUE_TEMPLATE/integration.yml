@@ -1,0 +1,70 @@
+name: Integration
+description: Something you built with gctx, or an integration you would like to see exist.
+labels: ["integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things use this template: telling us about something you built
+        (so it can be listed in the README's Ecosystem section), and
+        proposing an integration you would like someone to build.
+
+        Integrations live in **your** repository. The stable interfaces to
+        build against are `gctx --json` and the `opencontextually-mcp`
+        stdio server, which exposes one tool: `get_context(task, root)`.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which is this?
+      options:
+        - "I built something — please consider featuring it"
+        - "I'd like this to exist — proposing it for someone to pick up"
+        - "I'm building it now — flagging so we don't duplicate work"
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Name
+    validations:
+      required: true
+  - type: input
+    id: link
+    attributes:
+      label: Link
+      description: Repository, marketplace listing, or package page. Leave blank if it does not exist yet.
+    validations:
+      required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What it does
+      description: One or two sentences — what a user gets, and where gctx fits in.
+    validations:
+      required: true
+  - type: input
+    id: surface
+    attributes:
+      label: What it plugs into
+      placeholder: "VS Code, Cursor, Continue, OpenCode, a GitHub Action, an MCP client, a shell, ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Which interface does it use?
+      options:
+        - "gctx --json"
+        - "MCP server (opencontextually-mcp)"
+        - "Python API (get_context)"
+        - "gctx plain-text output"
+        - "Not built yet / undecided"
+    validations:
+      required: true
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: If you are asking to be featured
+      options:
+        - label: It works against a released version of OpenContextually, and I have run it.
+        - label: I understand community projects are listed as community-maintained, not endorsed or supported by this project.

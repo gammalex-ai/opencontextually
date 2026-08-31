@@ -1,12 +1,30 @@
 # OpenContextually
 
 [![Tests](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml/badge.svg)](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 **Give your coding agent the context it should read before it starts working.**
 
+[**Quickstart**](#quickstart) · [**Discord**](DISCORD_INVITE_URL) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md)
+
 OpenContextually turns a task into a small, ranked, explainable context
 package from your repository. It is not another coding agent — it is the
-context layer before the agent.
+open context layer *before* the agent.
+
+> **Agent failed because it read the wrong context?**
+> [Bring us the case.](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
+
+## Quickstart
+
+```bash
+pip install opencontextually
+
+gctx "fix the authentication bug"
+```
+
+**No model. No API key. No network. No database. No setup.** One dependency.
+The same repository and task produce byte-identical output every time.
 
 ```mermaid
 flowchart TB
@@ -17,9 +35,6 @@ flowchart TB
     end
     OC --> R(["task-ready context<br/>every file with a reason"])
 ```
-
-**No model. No API key. No network. No database. No setup.** One dependency.
-The same repository and task produce byte-identical output every time.
 
 ## What it looks like
 
@@ -101,11 +116,18 @@ below.
 
 ## Install
 
-```
-pip install -e .
+```bash
+pip install opencontextually
 ```
 
-Not yet on PyPI, so install from a clone. Python 3.10+.
+Python 3.10+, one runtime dependency. To work on OpenContextually itself,
+or to run it before the first PyPI release lands, install from a clone:
+
+```bash
+git clone https://github.com/gammalex-ai/opencontextually
+cd opencontextually
+pip install -e .
+```
 
 ## Using it
 
@@ -264,6 +286,53 @@ three are `core.py` (*defines Option*), `decorators.py` (*defines option*),
 and `termui.py` (*defines `_mask_hidden_input`*) — the third being a private
 helper whose name no part of the task literally matches.
 
+## Ecosystem & Community
+
+### Works with today
+
+Verified by the test suite and by hand against a clean install — nothing
+here is aspirational.
+
+| Surface | What it is | Status |
+| --- | --- | --- |
+| **`gctx` CLI** | `gctx "task"`, plus `--json`, `-v`, `--all`, `--root` | Supported |
+| **Python API** | `get_context(task, root=".")` returning a `ContextPackage` | Supported |
+| **MCP server** | `opencontextually-mcp`, stdio, one tool: `get_context(task, root)` | Supported — see [MCP](#mcp) |
+| **Any MCP-speaking client** | Anything that can launch a stdio MCP server and call one tool | Should work; only the server is tested |
+
+### Community integrations
+
+Nothing here yet — this project is new and we would rather show an empty
+table than a fictional one. The `--json` output and the MCP server are both
+stable, documented interfaces, so anything below is buildable today by
+anyone:
+
+- an editor or IDE extension that runs `gctx` on the current task
+- a wrapper for an agent harness — Cursor, Continue, OpenCode, Aider, or
+  your own
+- a GitHub Action that posts the context package for an issue onto its PR
+- a shell or `tmux` integration, a TUI, an alternative renderer
+- language support beyond Python's import graph (see
+  [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md))
+
+**Built something with `gctx`?** [Open an issue or a PR](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
+and we may feature it here. Community projects are not maintained by us,
+and we will say so next to each one.
+
+### The question this project is trying to answer
+
+> **What should an agent know before it acts, and how do we prove it got
+> the right context?**
+
+The second half is the hard half, and it is why
+[ContextBench](benchmarks/README.md) exists: every claim in the section
+above is checkable against committed answer keys, and the honest number —
+the held-out one — is the one quoted.
+
+Come argue with the numbers, bring a case where the wrong files were
+selected, or add a benchmark case from a repository we have never seen:
+[COMMUNITY.md](COMMUNITY.md) is the map of every way in.
+
 ## What it deliberately does not do
 
 - **Follow imports outside Python.** Expansion uses the stdlib `ast`
@@ -297,6 +366,14 @@ aren't repositories at all.
 Runs are deterministic: the same task and repository produce byte-identical
 output, which is asserted in the test suite and re-checked by the corpus
 runner. Nothing is written anywhere, and no network call is ever made.
+
+## Contributing
+
+Bug reports, context failures, ContextBench cases, integrations, language
+support and documentation fixes are all welcome —
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the workflow and the scope
+boundaries, [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md) lists concrete
+places to start, and [COMMUNITY.md](COMMUNITY.md) is where to find people.
 
 ## License
 

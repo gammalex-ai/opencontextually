@@ -8,11 +8,16 @@ body:
         Nearly every bug in this project traces back to a specific repo +
         task string. The more of that you can share, the faster this gets
         fixed.
+
+        If the problem is that an *agent* did the wrong thing because of
+        the context it had, use the
+        [context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
+        template instead.
   - type: textarea
     id: task
     attributes:
       label: Task string
-      description: The exact string you passed to `get_context()` / `octx`.
+      description: The exact string you passed to `get_context()` / `gctx`.
       placeholder: '"fix the authentication bug"'
     validations:
       required: true
@@ -52,14 +57,14 @@ body:
     id: actual
     attributes:
       label: What actually happened
-      description: Paste the relevant `octx` output (plain text or `--json`) if you can.
+      description: Paste the relevant `gctx` output (plain text or `--json`) if you can.
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: opencontextually version
-      description: 'Run: octx --version'
+      description: 'Run: gctx --version'
     validations:
       required: true
   - type: input

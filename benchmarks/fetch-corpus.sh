@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clone the ten public repositories the README's figures were measured
+# Clone the fourteen public repositories the README's figures were measured
 # against, at the exact commits they were measured at.
 #
 #     ./benchmarks/fetch-corpus.sh ~/src
@@ -29,6 +29,10 @@ pydantic/pydantic	f512b087202f58ec90a9d38c9102858567d72440
 fastapi/fastapi	49033471594ea5d99a80abdf1043231b7791ee49
 sqlfluff/sqlfluff	642e2e4a34a8e8afd36a45debe8bd3ffcf106c37
 django/django	73cc09f14f13fedddc14d6ba5b287cb33c24e4a4
+python-attrs/attrs	764bf92a1c96abe4615b59f3e5a7b738b0340a94
+urllib3/urllib3	85a8a9cfad3398bc504d088233d0a11af219a82a
+pytest-dev/pytest	2cd217e5b8842f842bc6e25514db8946b3108b2d
+scrapy/scrapy	53eb8d60bcd0160633f6513478f958ed5a457363
 LIST
 )
 

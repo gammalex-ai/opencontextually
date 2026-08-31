@@ -1,9 +1,51 @@
-# benchmarks
+# ContextBench
 
-Not installed, not imported by the package, not run in CI. `benchmarks/` sits
-outside `src/`, so `pip install` never sees it.
+The benchmark behind every selection-quality number in the README.
+
+It asks one question: **does `gctx` select the files a developer would
+actually need for a task, and leave out the rest?** Not how fast it walks a
+repository — whether the context it hands an agent is the right context.
+
+Two pieces:
+
+- **[`answer-keys.json`](answer-keys.json)** — for each repository and
+  task, the files that genuinely implement or test the behaviour, read out
+  of the project at a pinned commit. This is the benchmark. The rest is
+  plumbing.
+- **[`dogfood.py`](dogfood.py)** — runs the corpus, and separately checks
+  determinism and sweeps for anything secret-shaped surviving into a
+  package.
+
+## Tuned and held out
+
+Answer keys carry a `group`. Six repositories were used while tuning
+ranking constants, so their results are fitted to an unknown degree. Eight
+were held out: their keys were written and committed *before* the tool was
+run against them, and nothing was tuned afterwards. The held-out number is
+the one that predicts behaviour on a repository this project has never
+seen, and it is the one the README quotes.
+
+Keeping that split intact matters more than any individual score. If you
+tune against a held-out repository, say so in the PR — it moves to the
+tuned group, and the project needs a new reserved set.
+
+## Contributing a case
+
+The valuable part is the answer key, and it does not require writing code:
+a public repository, a pinned commit, a task phrased as a symptom, and the
+files someone fixing it would need open.
+[Open a case.](https://github.com/gammalex-ai/opencontextually/issues/new?template=contextbench_case.yml)
+
+Cases from repositories that are **not Python** are worth the most right
+now — the corpus is entirely Python, and so is import-following.
+
+---
 
 ## Why this exists
+
+Not installed, not imported by the package, not run in CI. `benchmarks/`
+sits outside `src/`, so `pip install` never sees it.
+
 
 Most real defects in this project were found by running the tool against
 unfamiliar repositories and reading the output — not by the test suite. The
