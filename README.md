@@ -6,8 +6,7 @@
 
 **Give your coding agent the context it should read before it starts working.**
 
-[**Quickstart**](#quickstart) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md) · [**Community**](COMMUNITY.md)
-<!-- Discord: add `[**Discord**](<invite>) · ` after Quickstart once the invite exists. -->
+[**Quickstart**](#quickstart) · [**Discord**](https://discord.gg/ZNqyQtz5cV) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md) · [**Community**](COMMUNITY.md)
 
 OpenContextually turns a task into a small, ranked, explainable context
 package from your repository. It is not another coding agent — it is the
