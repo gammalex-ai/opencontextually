@@ -376,6 +376,72 @@ def test_empty_files_are_not_treated_as_duplicates(tmp_path):
     assert reasons["duplicate"] == 0
 
 
+def test_translated_docs_collapse_to_english_representative(tmp_path):
+    # Mirrors a real i18n docs layout (fastapi, Docusaurus, mkdocs-static-i18n,
+    # ...): one directory per language, each mirroring the same relative
+    # tree. Only the fixture's own locale-root threshold (3 language dirs)
+    # needs to be met; the specific language codes are not hardcoded.
+    for locale in ("en", "de", "fr", "hi"):
+        _write(
+            tmp_path / "docs" / locale / "docs" / "advanced" / "security" / "oauth2-scopes.md",
+            f"# scopes ({locale})\n",
+        )
+
+    discovered, reasons = discover(tmp_path)
+    found = {f.path: f for f in discovered}
+
+    kept_path = "docs/en/docs/advanced/security/oauth2-scopes.md"
+    assert kept_path in found
+    assert "docs/de/docs/advanced/security/oauth2-scopes.md" not in found
+    assert "docs/fr/docs/advanced/security/oauth2-scopes.md" not in found
+    assert "docs/hi/docs/advanced/security/oauth2-scopes.md" not in found
+    assert reasons["duplicate"] == 3
+    assert found[kept_path].duplicate_count == 3
+
+
+def test_locale_mirror_falls_back_to_alphabetical_locale_without_english(tmp_path):
+    for locale in ("de", "fr", "hi"):
+        _write(tmp_path / "docs" / locale / "guide.md", f"guide ({locale})\n")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "docs/de/guide.md" in found
+    assert "docs/fr/guide.md" not in found
+    assert "docs/hi/guide.md" not in found
+    assert reasons["duplicate"] == 2
+
+
+def test_two_language_source_dirs_are_not_treated_as_locale_mirror(tmp_path):
+    # Below LOCALE_MIN_SIBLINGS (3): two lowercase-short directories alone
+    # must not trigger locale-mirror collapsing, even though both codes
+    # match the locale-code shape.
+    _write(tmp_path / "pkg" / "js" / "index.js", "js impl\n")
+    _write(tmp_path / "pkg" / "go" / "index.js", "go impl\n")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert "pkg/js/index.js" in found
+    assert "pkg/go/index.js" in found
+    assert reasons["duplicate"] == 0
+
+
+def test_locale_like_dirs_with_different_content_trees_are_untouched(tmp_path):
+    # Three lowercase-short sibling dirs clears LOCALE_MIN_SIBLINGS, but
+    # none of them mirrors the same relative path underneath -- collapsing
+    # must never fire without a matching family.
+    _write(tmp_path / "pkg" / "js" / "index.js", "js impl\n")
+    _write(tmp_path / "pkg" / "go" / "main.go", "go impl\n")
+    _write(tmp_path / "pkg" / "py" / "__init__.py", "py impl\n")
+
+    discovered, reasons = discover(tmp_path)
+    found = _paths(discovered)
+
+    assert {"pkg/js/index.js", "pkg/go/main.go", "pkg/py/__init__.py"} <= found
+    assert reasons["duplicate"] == 0
+
+
 def test_role_classification(tmp_path):
     _write(tmp_path / "src" / "app.py", "def f(): pass")
     _write(tmp_path / "tests" / "test_app.py", "def test_f(): pass")
