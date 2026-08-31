@@ -220,6 +220,24 @@ EXAMPLE_DIR_SEGMENTS = {
 }
 EXAMPLE_PATH_PENALTY = 0.35
 
+# --- bug fix: a bundled copy of a previous major version ---------------
+#
+# pydantic ships Pydantic 1 inside Pydantic 2 as `pydantic/v1/`. Asked
+# about "field validator not called on assignment", six of eighteen slots
+# went to that tree -- `v1/validators.py` ranked 2nd -- while `main.py`,
+# where assignment validation actually lives, was never selected. A
+# directory named `v1` inside a package whose current version is 2 is
+# previous-generation code: real, importable, and almost never what a task
+# about current behaviour means.
+#
+# Uniform application is what makes this safe. In a project where
+# *everything* lives under `api/v1/`, every file takes the same penalty and
+# the ranking between them is unchanged -- the rule can only matter where
+# an old copy competes with a current one.
+LEGACY_PATH_PENALTY = 0.3
+_LEGACY_DIR_SEGMENTS = {"legacy", "deprecated", "vendored", "_vendor", "third_party"}
+_LEGACY_VERSION_DIR_RE = re.compile(r"^v\d+$")
+
 # --- bug fix: changelogs answered questions about the present ----------
 #
 # A changelog, release-notes page or migration history names every feature
@@ -877,6 +895,18 @@ def _in_example_path(path: str) -> bool:
     return any(part in EXAMPLE_DIR_SEGMENTS for part in dir_parts)
 
 
+def _in_legacy_path(path: str) -> bool:
+    """True when `path` sits under a previous-version, deprecated or
+    vendored directory -- used only to apply LEGACY_PATH_PENALTY, never to
+    exclude the file outright.
+    """
+    dir_parts = path.lower().split("/")[:-1]
+    return any(
+        part in _LEGACY_DIR_SEGMENTS or _LEGACY_VERSION_DIR_RE.match(part)
+        for part in dir_parts
+    )
+
+
 def _is_history_document(path: str) -> bool:
     """True when `path` is a changelog, release-notes page, or a file
     under a releases/changelog directory -- used only to apply
@@ -1033,6 +1063,10 @@ def _analyze(
     # see HISTORY_DOC_PENALTY above.
     if _is_history_document(discovered_file.path):
         score *= HISTORY_DOC_PENALTY
+    # A bundled previous major version, or a vendored tree -- see
+    # LEGACY_PATH_PENALTY above.
+    if _in_legacy_path(discovered_file.path):
+        score *= LEGACY_PATH_PENALTY
 
     reason = _build_reason(discovered_file.role, filename_terms, symbol_names, content_term_counts)
     if discovered_file.duplicate_count > 0:

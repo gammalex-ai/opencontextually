@@ -512,3 +512,51 @@ def test_a_changelog_still_ranks_when_nothing_else_matches(tmp_path):
     items, _extra, _stats = select(discovered, "legacy telemetry endpoint removed")
 
     assert "CHANGELOG.md" in [item.path for item in items]
+
+
+def test_a_bundled_previous_version_does_not_outrank_current_code(tmp_path):
+    # pydantic ships Pydantic 1 inside Pydantic 2 as `pydantic/v1/`. Asked
+    # about current behaviour, six of eighteen slots went to that tree
+    # while the current implementation was missed entirely.
+    _write(
+        tmp_path / "pkg" / "v1" / "validators.py",
+        "def str_validator(v):\n    return v\n"
+        "def field_validator(v):\n    return v\n"
+        "class Validator:\n"
+        "    def validate_assignment(self, name, value): ...\n",
+    )
+    _write(
+        tmp_path / "pkg" / "main.py",
+        "class Model:\n"
+        "    def _field_setattr_handler(self, name, value):\n"
+        "        if self.model_config.get('validate_assignment'):\n"
+        "            return self._validate_assignment(name, value)\n"
+        "    def _validate_assignment(self, name, value):\n"
+        "        return self.__pydantic_validator__.validate_assignment(name, value)\n"
+        "    def __setattr__(self, name, value):\n"
+        "        return self._field_setattr_handler(name, value)\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "field validator not called on assignment")
+
+    ranked = [item.path for item in items]
+    assert ranked.index("pkg/main.py") < ranked.index("pkg/v1/validators.py")
+
+
+def test_a_uniform_version_directory_does_not_change_relative_ranking(tmp_path):
+    # The safety property: in a project where *everything* lives under
+    # api/v1/, every file takes the same penalty, so the ranking between
+    # them is untouched. The rule can only matter where an old copy
+    # competes with a current one.
+    _write(
+        tmp_path / "api" / "v1" / "routes.py",
+        "def build_redirect_response():\n    return redirect_headers()\n"
+        "def redirect_headers():\n    return {}\n",
+    )
+    _write(tmp_path / "api" / "v1" / "models.py", "class User:\n    pass\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "redirect response headers")
+
+    assert [item.path for item in items][0] == "api/v1/routes.py"

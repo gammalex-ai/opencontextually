@@ -15,7 +15,9 @@
     "file that mentions it: the implementation, the dependency the fix reaches",
     "through, the configuration contract where there is one, and the test.",
     "",
-    "The 'held_out_2' group is a second reserved set, added after the first held-out run exposed the duplicate-copy failure class. Their keys were written and committed before the fix for that class existed, so they measure whether it generalizes rather than whether it was fitted."
+    "The 'held_out_2' group is a second reserved set, added after the first held-out run exposed the duplicate-copy failure class. Their keys were written and committed before the fix for that class existed, so they measure whether it generalizes rather than whether it was fitted.",
+    "",
+    "Result of the held_out_2 round: the near-duplicate document family cap it was reserved for was REVERTED. It left held_out_2 unchanged (11/13, 10/13), and auditing what it removed showed it collapsing genuinely different pages that share a universal filename -- black's docs/index.md against docs/contributing/index.md. The legacy/vendored tree penalty from the same round was kept: it recovers pydantic's main.py and its audit is clean. held_out_2 is now spent as evidence and serves as regression data."
   ],
   "keys": [
     {
