@@ -1,0 +1,7 @@
+# The sdist ships tests/, and those tests read examples/auth_bug -- the
+# fixture behind the README's worked example. Without this, `pip download`
+# + `pytest` (what a distribution packager actually does) fails 22 tests on
+# a missing directory rather than on anything real.
+graft examples
+graft tests
+include CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md

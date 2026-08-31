@@ -170,21 +170,58 @@ reading the output, so a standing corpus is part of the project
 (`benchmarks/`, with a runner that also checks determinism and sweeps for
 leaked secrets).
 
+### What it selected, and what it missed
+
+Six of those repositories have a hand-checked answer key: the files that
+actually implement or test the behaviour each task names, read out of the
+project at its pinned commit. That makes selection quality measurable
+rather than assertable.
+
+| Repository | Files | Selected | Answer-key files found | In the default view |
+| --- | ---: | ---: | ---: | ---: |
+| httpx | 125 | 17 | 4/4 | 4/4 |
+| requests | 128 | 16 | 4/4 | 4/4 |
+| flask | 236 | 18 | 3/3 | 3/3 |
+| click | 166 | 18 | 3/3 | 2/3 |
+| sqlfluff | 5,955 | 18 | 2/2 | 1/2 |
+| django | 7,085 | 18 | 2/3 | 2/3 |
+| **Total** | | | **18/19** | **16/19** |
+
+The second column is the one that matters to an agent. The compact output
+shows eight files, so a file recovered at rank 17 was found but not
+delivered — recall of the package is not recall of what gets read.
+
+Across those six packages: **zero** fixture, vendor, generated or CI files
+selected, **every** path inside the configured root, and **0.08%–1.6%** of
+repository bytes delivered. sqlfluff's 5,249 test fixtures and django's 736
+documentation files are excluded in full.
+
+The remaining miss is honest and instructive. For *"queryset filter drops
+the second condition"*, django's `contrib/admin/filters.py` — admin UI
+list filters, the wrong subsystem entirely — takes rank 1, because it uses
+the task's vocabulary more densely than the ORM does. `query_utils.py`,
+where `Q` combines the conditions, is not selected at all. Term-rarity
+weighting was tried and measured: it made other repositories worse. This
+is tracked as [issue #6](https://github.com/gammalex-ai/opencontextually/issues/6)
+and pinned by a regression test.
+
+### The corpus
+
 Ten public Python projects, each with a plausible task, all reproducible
 with `benchmarks/dogfood.py`:
 
 | Repository | Commit | Files | Time | Task |
 | --- | --- | ---: | ---: | --- |
-| [encode/httpx](https://github.com/encode/httpx) | [`b5addb64`](https://github.com/encode/httpx/commit/b5addb64f016) | 125 | 0.15s | redirect loses the authorization header |
-| [psf/requests](https://github.com/psf/requests) | [`5460f467`](https://github.com/psf/requests/commit/5460f467b02e) | 128 | 0.11s | session cookie persists across redirects |
-| [pallets/click](https://github.com/pallets/click) | [`36baa15f`](https://github.com/pallets/click/commit/36baa15ff831) | 166 | 0.22s | option prompt does not hide the input |
-| [pallets/flask](https://github.com/pallets/flask) | [`d318b683`](https://github.com/pallets/flask/commit/d318b6834711) | 236 | 0.17s | session cookie is not set on redirect |
-| [psf/black](https://github.com/psf/black) | [`8947c48e`](https://github.com/psf/black/commit/8947c48ef207) | 482 | 0.39s | string normalization changes the wrong quotes |
-| [Textualize/rich](https://github.com/Textualize/rich) | [`9d8f9a37`](https://github.com/Textualize/rich/commit/9d8f9a372cc5) | 553 | 0.49s | table column width ignores the terminal size |
-| [pydantic/pydantic](https://github.com/pydantic/pydantic) | [`f512b087`](https://github.com/pydantic/pydantic/commit/f512b087202f) | 824 | 1.47s | field validator not called on assignment |
-| [fastapi/fastapi](https://github.com/fastapi/fastapi) | [`49033471`](https://github.com/fastapi/fastapi/commit/49033471594e) | 3,139 | 1.75s | dependency override not applied in nested routers |
-| [sqlfluff/sqlfluff](https://github.com/sqlfluff/sqlfluff) | [`642e2e4a`](https://github.com/sqlfluff/sqlfluff/commit/642e2e4a34a8) | 5,955 | 1.64s | indentation rule fires on a templated line |
-| [django/django](https://github.com/django/django) | [`73cc09f1`](https://github.com/django/django/commit/73cc09f14f13) | 7,085 | 6.38s | queryset filter drops the second condition |
+| [encode/httpx](https://github.com/encode/httpx) | [`b5addb64`](https://github.com/encode/httpx/commit/b5addb64f016) | 125 | 0.18s | redirect loses the authorization header |
+| [psf/requests](https://github.com/psf/requests) | [`5460f467`](https://github.com/psf/requests/commit/5460f467b02e) | 128 | 0.12s | session cookie persists across redirects |
+| [pallets/click](https://github.com/pallets/click) | [`36baa15f`](https://github.com/pallets/click/commit/36baa15ff831) | 166 | 0.25s | option prompt does not hide the input |
+| [pallets/flask](https://github.com/pallets/flask) | [`d318b683`](https://github.com/pallets/flask/commit/d318b6834711) | 236 | 0.19s | session cookie is not set on redirect |
+| [psf/black](https://github.com/psf/black) | [`8947c48e`](https://github.com/psf/black/commit/8947c48ef207) | 482 | 0.48s | string normalization changes the wrong quotes |
+| [Textualize/rich](https://github.com/Textualize/rich) | [`9d8f9a37`](https://github.com/Textualize/rich/commit/9d8f9a372cc5) | 553 | 0.63s | table column width ignores the terminal size |
+| [pydantic/pydantic](https://github.com/pydantic/pydantic) | [`f512b087`](https://github.com/pydantic/pydantic/commit/f512b087202f) | 824 | 1.70s | field validator not called on assignment |
+| [fastapi/fastapi](https://github.com/fastapi/fastapi) | [`49033471`](https://github.com/fastapi/fastapi/commit/49033471594e) | 3,139 | 2.11s | dependency override not applied in nested routers |
+| [sqlfluff/sqlfluff](https://github.com/sqlfluff/sqlfluff) | [`642e2e4a`](https://github.com/sqlfluff/sqlfluff/commit/642e2e4a34a8) | 5,955 | 2.18s | indentation rule fires on a templated line |
+| [django/django](https://github.com/django/django) | [`73cc09f1`](https://github.com/django/django/commit/73cc09f14f13) | 7,085 | 7.52s | queryset filter drops the second condition |
 
 All ten are MIT- or BSD-licensed public projects, unaffiliated with this
 one, chosen for a spread of size and layout rather than for flattering
@@ -201,8 +238,12 @@ flattering one: these are *all* files in a clone. What actually gets read
 is what survives your ignore rules, and on a repository with heavy build
 output that is a small fraction. A 42,000-file checkout completing in two
 seconds sounds impressive and mostly means 41,000 files were gitignored and
-never opened. Django is the more meaningful figure — 8,468 files genuinely
-scanned in 6.4 seconds.
+never opened. Of the 18,693 files above, 16,331 are actually scanned;
+django's real figure is 5,580 files in 7.5 seconds.
+
+Speed is listed last on purpose. It is a property worth keeping, not the
+claim — a tool that walks a repository quickly and hands an agent the wrong
+eight files has not helped anyone.
 
 For `gctx "option prompt does not hide the input"` against click, the top
 three are `core.py` (*defines Option*), `decorators.py` (*defines option*),
@@ -218,10 +259,15 @@ helper whose name no part of the task literally matches.
   naming convention — asking about "the context agent" where many files are
   named `*context*` — because filename matches then dominate.
 - **Find problems for you.** The two checks are narrow, named rules that
-  expect to stay quiet. Across eleven real repositories, one produced a
-  false positive (since fixed) — the honest measure of how much "high
-  precision" has actually been tested. Silence is the normal outcome; a
-  footer always names which checks ran.
+  expect to stay quiet: they flag *detectable* gaps and conflicts —
+  a config value contradicting a documented one, a config key or symbol no
+  test references — not arbitrary missing context. Across the six
+  answer-key corpus tasks they produced **zero** findings, which is the
+  honest scope: they fire on the patterns they name, and `examples/` is
+  where you can watch them do it. Across eleven real repositories, one
+  produced a false positive (since fixed) — the honest measure of how much
+  "high precision" has actually been tested. Silence is the normal outcome;
+  a footer always names which checks ran.
 - **Guarantee secrets stay out of excerpts.** Redaction masks
   secret-shaped keys and high-entropy strings, but it is best-effort
   pattern matching, not a secrets scanner. See [SECURITY.md](SECURITY.md).
