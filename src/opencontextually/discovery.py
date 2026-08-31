@@ -236,6 +236,40 @@ def _resolve_core_excludes_file(root: Path) -> Path | None:
     return None
 
 
+# --- bug fix: an invalid ignore pattern crashed the whole run -------------
+#
+# `pathspec` raises GitIgnorePatternError for patterns git itself accepts --
+# a line containing only "!" being the case found in the wild (psf/black
+# ships two such files as fixtures for its own handling of them). Letting
+# that escape meant get_context() died with a traceback on a repository
+# `git status` reads without complaint, which is never the right outcome:
+# discovery must not refuse to look at a project because of what the project
+# happens to contain.
+#
+# The fast path compiles the whole file at once, so the common case pays
+# nothing. Only when that fails is each line tried individually, keeping
+# every pattern pathspec accepts and skipping just the ones it does not.
+# Dropping the whole file instead would be worse than the crash in one
+# specific way -- it would silently un-ignore everything the file's *valid*
+# rules excluded, which for a .gitignore can mean scanning build output,
+# vendored dependencies, or secrets the author deliberately excluded.
+def _compile_pathspec(lines: list[str]) -> pathspec.PathSpec:
+    """Compile gitignore `lines`, skipping any single line pathspec rejects."""
+    try:
+        return pathspec.PathSpec.from_lines("gitignore", lines)
+    except Exception:
+        pass
+
+    usable: list[str] = []
+    for line in lines:
+        try:
+            pathspec.PathSpec.from_lines("gitignore", [line])
+        except Exception:
+            continue
+        usable.append(line)
+    return pathspec.PathSpec.from_lines("gitignore", usable)
+
+
 def _load_root_spec(root: Path) -> pathspec.PathSpec:
     """Build the root-scoped PathSpec: global excludes, repo-local
     info/exclude, root .gitignore, and .opencontextuallyignore, in
@@ -251,7 +285,7 @@ def _load_root_spec(root: Path) -> pathspec.PathSpec:
     lines.extend(_read_lines_if_exists(root / ".gitignore"))
     lines.extend(_read_lines_if_exists(root / ".opencontextuallyignore"))
 
-    return pathspec.PathSpec.from_lines("gitignore", lines)
+    return _compile_pathspec(lines)
 
 
 def _scope_verdict(spec: pathspec.PathSpec, match_path: str) -> bool | None:
@@ -518,7 +552,7 @@ def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
         if dir_rel and ".gitignore" in filenames:
             gi_lines = _read_lines_if_exists(dir_abs / ".gitignore")
             if gi_lines:
-                nested_specs[dir_rel] = pathspec.PathSpec.from_lines("gitignore", gi_lines)
+                nested_specs[dir_rel] = _compile_pathspec(gi_lines)
 
         ancestor_scopes = [
             (scope_dir, nested_specs[scope_dir])

@@ -21,6 +21,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Warnings raised while parsing a scanned file no longer reach the terminal.
+  `ast.parse` emits `SyntaxWarning` for constructs like an invalid escape
+  sequence, and reported them as `<unknown>:108` — a line number with no
+  filename, useless and alarming in equal measure. Running against psf/black
+  produced 24 lines of stderr against 22 lines of output. This tool reads
+  code, it does not lint it.
+- **Discovery no longer crashes on an ignore pattern `pathspec` rejects.** A
+  `.gitignore` containing a bare `!` line — which `git status` reads without
+  complaint — raised `GitIgnorePatternError` out of `discover()`, so
+  `get_context()` died with a traceback on any repository containing one.
+  Found by running against psf/black, which ships two such files as fixtures
+  for its own handling of them. Only the offending line is skipped now; the
+  file's remaining patterns still apply, so nothing it legitimately excluded
+  becomes visible.
 - `configuration_discrepancy` no longer reads JSON/YAML **test fixtures as
   project configuration**. Directory names were matched whole, so `fixtures/`
   was recognized as test data but `demo_fixtures/` was not. Found on a real
