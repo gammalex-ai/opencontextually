@@ -513,6 +513,121 @@ def _dedupe_by_content(discovered: list[DiscoveredFile]) -> tuple[list[Discovere
     return kept, len(drop_paths)
 
 
+# --------------------------------------------------------------------------
+# bug fix: translated documentation trees scored as independent content
+#
+# Many docs sites mirror every page across a `docs/<locale>/...` tree, one
+# copy per language (fastapi ships 13: docs/en, docs/de, docs/fr, docs/hi,
+# docs/ja, docs/ko, docs/pt, docs/ru, docs/tr, docs/uk, docs/zh, ...). Each
+# locale copy sits at the identical relative path and describes the
+# identical thing, but filename matching does not know or care what
+# language a file's *content* is written in -- a term that matches one
+# copy's path matches every sibling copy's path exactly as well. Observed
+# on a real repo (fastapi): a task ending in "...declares no scopes"
+# legitimately matched docs/en/docs/advanced/security/oauth2-scopes.md,
+# then matched every one of its 12 sibling-language copies too, spending
+# 13 of 18 delivery slots on the same document translated 13 times and
+# crowding out every other file that scored above threshold.
+#
+# This collapses a detected translation family down to one representative
+# the same way _dedupe_by_content() already collapses byte-identical
+# copies -- English preferred if present, else the alphabetically first
+# locale, for determinism -- with duplicate_count incremented so the
+# collapse is never silent (surfaced in the kept item's reason by
+# selector.py, exactly like a byte-identical duplicate).
+#
+# Detection is structural, not a hardcoded language list: a directory is
+# only treated as a locale root when at least LOCALE_MIN_SIBLINGS of its
+# immediate children look like a language code (a bare ISO 639 code,
+# optionally with a region/script subtag -- "en", "zh", "pt-br",
+# "zh-hant") -- what any docs/i18n directory using this convention
+# (Docusaurus, mkdocs-static-i18n, Sphinx gettext, ...) actually looks
+# like on disk, regardless of which specific languages a given project
+# ships. Two files are only ever collapsed into each other when they also
+# share the exact same path *after* the locale segment, so a directory
+# that merely happens to look locale-shaped (a monorepo's `pkg/js/`,
+# `pkg/go/`, `pkg/py/`, say) is never affected unless it also mirrors an
+# identical file tree underneath -- at which point collapsing it is the
+# right call for the same reason a real translation tree is.
+# --------------------------------------------------------------------------
+
+_LOCALE_CODE_RE = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,4})?$")
+LOCALE_MIN_SIBLINGS = 3
+PREFERRED_LOCALE = "en"
+
+
+def _find_locale_roots(discovered: list[DiscoveredFile]) -> set[str]:
+    """Root-relative directory paths whose immediate children are, in
+    sufficient number, locale-code-shaped -- see the module comment above.
+    """
+    children_by_dir: dict[str, set[str]] = {}
+    for f in discovered:
+        parts = f.path.split("/")
+        for i in range(1, len(parts)):
+            if _LOCALE_CODE_RE.match(parts[i]):
+                parent = "/".join(parts[:i])
+                children_by_dir.setdefault(parent, set()).add(parts[i])
+
+    return {
+        parent
+        for parent, children in children_by_dir.items()
+        if len(children) >= LOCALE_MIN_SIBLINGS
+    }
+
+
+def _dedupe_by_locale_mirror(
+    discovered: list[DiscoveredFile],
+) -> tuple[list[DiscoveredFile], int]:
+    """Collapse files that live under a detected locale root (see
+    _find_locale_roots()) and share the same path once their locale
+    segment is stripped out, down to one representative per family --
+    see the module comment above. Returns (deduplicated files, count of
+    locale copies dropped).
+    """
+    locale_roots = _find_locale_roots(discovered)
+    if not locale_roots:
+        return discovered, 0
+
+    families: dict[tuple[str, str], list[tuple[str, DiscoveredFile]]] = {}
+    for f in discovered:
+        parts = f.path.split("/")
+        for i in range(1, len(parts)):
+            parent = "/".join(parts[:i])
+            if parent in locale_roots and _LOCALE_CODE_RE.match(parts[i]):
+                locale = parts[i]
+                rest = "/".join(parts[i + 1 :])
+                families.setdefault((parent, rest), []).append((locale, f))
+                break
+
+    drop_paths: set[str] = set()
+    duplicate_counts: dict[str, int] = {}
+
+    for members in families.values():
+        if len(members) < 2:
+            continue
+        members.sort(
+            key=lambda lf: (0 if lf[0] == PREFERRED_LOCALE else 1, lf[0], lf[1].path)
+        )
+        representative = members[0][1]
+        duplicates = [f for _locale, f in members[1:]]
+        for dup in duplicates:
+            drop_paths.add(dup.path)
+        duplicate_counts[representative.path] = len(duplicates)
+
+    if not drop_paths:
+        return discovered, 0
+
+    kept: list[DiscoveredFile] = []
+    for f in discovered:
+        if f.path in drop_paths:
+            continue
+        if f.path in duplicate_counts:
+            f.duplicate_count += duplicate_counts[f.path]
+        kept.append(f)
+
+    return kept, len(drop_paths)
+
+
 def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
     """Walk `root` and return (discovered files, exclusion reason counts).
 
@@ -615,6 +730,7 @@ def discover(root: Path) -> tuple[list[DiscoveredFile], dict[str, int]]:
             )
 
     discovered, duplicate_count = _dedupe_by_content(discovered)
-    reasons[REASON_DUPLICATE] = duplicate_count
+    discovered, locale_duplicate_count = _dedupe_by_locale_mirror(discovered)
+    reasons[REASON_DUPLICATE] = duplicate_count + locale_duplicate_count
 
     return discovered, reasons

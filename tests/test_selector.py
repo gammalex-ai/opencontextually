@@ -39,6 +39,114 @@ def test_tokenize_lowercases():
     assert tokenize("Session") == ["session"]
 
 
+def test_tokenize_drops_generic_function_words():
+    # Regression guard: these carry no code-relevant meaning on their own
+    # and were previously matching every prose-heavy docstring/doc file
+    # regardless of the task's actual subject. See the STOPWORDS comment
+    # block in selector.py.
+    tokens = tokenize(
+        "nested dependencies using yield are cleaned up in the wrong order, "
+        "even though the endpoint itself declares no scopes"
+    )
+    for filler in ("using", "even", "though", "itself"):
+        assert filler not in tokens
+    assert "nested" in tokens
+    assert "dependencies" in tokens
+    assert "yield" in tokens
+    assert "order" in tokens
+    assert "endpoint" in tokens
+    assert "scopes" in tokens
+
+
+def test_detect_compound_fragments_finds_pascal_case_product_names():
+    from opencontextually.selector import detect_compound_fragments
+
+    assert detect_compound_fragments(
+        "Fix generated OpenAPI when two endpoints collide"
+    ) == {"openapi": ["open", "api"]}
+    assert detect_compound_fragments(
+        "TestClient does not preserve cookies"
+    ) == {"testclient": ["test", "client"]}
+
+
+def test_detect_compound_fragments_ignores_single_fragment_camel_case():
+    from opencontextually.selector import detect_compound_fragments
+
+    # "fix"/"bug" are stopwords, leaving only one real fragment ("auth") --
+    # below the two-fragment floor, so this must not be treated as a
+    # compound at all (see the module comment in selector.py).
+    assert detect_compound_fragments("fixAuthBug") == {}
+
+
+def test_detect_compound_fragments_ignores_snake_case():
+    from opencontextually.selector import detect_compound_fragments
+
+    # Underscore-joined words are already split into separate raw words
+    # before camelCase detection ever runs -- not the pattern this targets.
+    assert detect_compound_fragments("fix_auth_bug") == {}
+
+
+def test_fragment_weight_leaves_rare_fragments_at_full_strength():
+    from opencontextually.selector import _fragment_weight
+
+    assert _fragment_weight(doc_count=2, total_files=1000) == 1.0
+    assert _fragment_weight(doc_count=0, total_files=1000) == 1.0
+
+
+def test_fragment_weight_suppresses_pathologically_common_fragments():
+    from opencontextually.selector import _fragment_weight
+
+    # "api" appearing in 900 of 1000 files: heavily suppressed but never
+    # fully zeroed.
+    weight = _fragment_weight(doc_count=900, total_files=1000)
+    assert 0.0 < weight < 0.1
+
+
+def test_compound_preserved_and_common_fragment_suppressed(tmp_path):
+    # Mirrors the real-world failure: in a repo literally about an API,
+    # "api" (a fragment of "OpenAPI") appears in nearly every file, while
+    # only one file is genuinely about OpenAPI generation. Without
+    # compound-fragment handling, "api"'s sheer repetition buries the one
+    # file that matters under dozens of unrelated "references api" hits.
+    _write(
+        tmp_path / "openapi" / "generator.py",
+        "def generate_openapi_schema():\n"
+        "    '''Builds the OpenAPI schema for this API.'''\n"
+        "    pass\n",
+    )
+    for i in range(30):
+        _write(
+            tmp_path / f"noise_{i}.py",
+            f"# module {i}\ndef call_api_{i}():\n    '''Talks to the api.'''\n    pass\n",
+        )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, stats = select(discovered, "Fix generated OpenAPI when two endpoints collide")
+
+    assert "openapi" in stats["terms"]
+    assert items, "expected at least one included item"
+    assert items[0].path == "openapi/generator.py"
+
+    # The 30 generic "api"-mentioning files must not crowd every slot --
+    # most of them should now fail to clear the bar at all.
+    noise_included = sum(1 for item in items if item.path.startswith("noise_"))
+    assert noise_included < 10
+
+
+def test_ordinary_camel_case_task_unaffected_by_fragment_handling(tmp_path):
+    # Control case: a task with no PascalCase compound must select()
+    # identically whether or not this mechanism exists -- compounds is
+    # empty, so the whole two-pass/suppression path is a no-op.
+    _write(tmp_path / "auth_session.py", "def refresh_auth_session():\n    pass\n")
+    _write(tmp_path / "unrelated.py", "# nothing to do with it\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, stats = select(discovered, "fix the auth session bug")
+
+    assert stats["terms"] == ["auth", "session"]
+    assert any(item.path == "auth_session.py" for item in items)
+
+
 def test_scoring_ranks_filename_and_symbol_matches_above_content_only(tmp_path):
     _write(
         tmp_path / "src" / "auth" / "session.py",

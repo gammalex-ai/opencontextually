@@ -589,6 +589,23 @@ STOPWORDS = {
     "change", "create", "build", "optimize", "cleanup", "investigate",
     "debug", "broken", "wrong", "fails", "failing", "failed", "better",
     "properly", "correctly", "instead", "still", "also", "then",
+    # --- bug fix: generic function words matched every prose-heavy file --
+    # These carry no code-relevant meaning on their own, yet were not
+    # stopwords, so a file whose docstrings are exhaustive prose (e.g.
+    # FastAPI's own routing.py/applications.py, which document every
+    # parameter of every method in full sentences) matched them by sheer
+    # volume regardless of the task's actual subject. Observed on a real
+    # repo (fastapi): "nested dependencies using yield are cleaned up in
+    # the wrong order" matched "where" and "using" in both files just from
+    # ordinary English prose, inflating their distinct-term coverage (and
+    # so their score) on a task they had no special claim to. Unlike the
+    # generic-verb family above, these are closed-class words (relative
+    # pronouns, conjunctions, reflexives) that are never themselves the
+    # subject of a bug report -- "where" and "which" ask a question about
+    # code, they never name it.
+    "where", "who", "which", "whom", "whose", "using", "even", "though",
+    "although", "itself", "himself", "herself", "themselves", "yourself",
+    "yourselves", "ourselves",
 }
 
 # --------------------------------------------------------------------------
@@ -617,6 +634,103 @@ def tokenize(task: str) -> list[str]:
         if t and len(t) >= MIN_TOKEN_LEN and t not in STOPWORDS
     ]
     return tokens
+
+
+# --------------------------------------------------------------------------
+# bug fix: compound proper nouns split into repo-generic pseudo-stopwords
+#
+# tokenize()'s camelCase splitting is right for an ordinary identifier
+# ("fixAuthBug" -> "auth", a real signal), but wrong for a compound
+# product/class name written in PascalCase: "OpenAPI" -> "open" + "api",
+# "FastAPI" -> "fast" + "api", "TestClient" -> "test" + "client". In a repo
+# actually named FastAPI, "api" and "test" (the latter also matching every
+# test_*.py file by convention) are near-universal words -- splitting the
+# compound apart throws away the one specific, load-bearing signal ("this
+# task is about OpenAPI") and replaces it with two of the least
+# discriminating words available. Observed on a real repo (fastapi): tasks
+# mentioning "OpenAPI" or "TestClient" filled half their result list with
+# files whose only connection was the bare word "api" or "test".
+#
+# The fix is additive, not subtractive: the compound is *added* to the
+# term list (so "openapi"/"fastapi"/"testclient" -- genuinely rare,
+# specific words -- can match on their own strength), and each fragment's
+# contribution is *suppressed* only if that specific fragment turns out to
+# be repo-common (see _fragment_weight() below) -- not by hardcoding "api"
+# or "test" into a stopword list, which would overfit this one repo and
+# silently misfire on any project where "api"/"test" are the actual point
+# of the task. A repo where "client" is rare keeps `client`'s full weight;
+# only whichever fragment the *scanned* repo turns out to repeat
+# constantly gets damped, and only because it was born from a compound
+# split -- an ordinary standalone task word is never touched by this,
+# however common it happens to be (that broader, task-wide IDF idea was
+# tried and reverted: it rewarded incidental prose words like "drops" and
+# "fires" purely for being rare in one run, an unrelated failure mode this
+# narrower, structural fix does not reach).
+#
+# Detection requires a SINGLE raw word (no internal separator -- so
+# "fix_auth_bug" never qualifies, only genuine camelCase/PascalCase) to
+# split into two or more tokenize()-eligible fragments. That two-fragment
+# floor is what keeps this from ever firing on an ordinary identifier like
+# "fixAuthBug": camelCase-splitting it yields "fix"/"Auth"/"Bug", and
+# "fix"/"bug" are already stopwords, leaving only one real fragment
+# ("auth") -- below the floor, so "fixAuthBug" is untouched and
+# tokenize()'s existing single-fragment behavior for it is unchanged.
+# --------------------------------------------------------------------------
+
+# Below this repo-wide document-frequency ratio, a fragment still looks
+# like a real, specific word even though it happens to also be half of a
+# compound the task mentioned -- e.g. "client" in a repo where "client" is
+# genuinely rare. Only a fragment *above* this bar (appears in more than
+# 1 in 20 discovered files) gets any suppression at all.
+FRAGMENT_RARE_RATIO = 0.05
+
+
+def detect_compound_fragments(task: str) -> dict[str, list[str]]:
+    """Map each compound (a single raw word in `task` that camelCase-
+    splits into >=2 tokenize()-eligible fragments) to its lowercased
+    fragment tokens -- see the module comment above. A word that splits
+    into fewer than two surviving fragments (e.g. "fixAuthBug", where
+    "fix"/"bug" are stopwords) is not a compound for this purpose and is
+    absent from the result.
+    """
+    compounds: dict[str, list[str]] = {}
+    for word in re.split(r"[^A-Za-z0-9]+", task):
+        if not word:
+            continue
+        parts = _split_camel_and_snake(word).split()
+        if len(parts) < 2:
+            continue
+        fragments = [
+            p.lower() for p in parts
+            if len(p) >= MIN_TOKEN_LEN and p.lower() not in STOPWORDS
+        ]
+        if len(fragments) < 2:
+            continue
+        compound = word.lower()
+        if len(compound) < MIN_TOKEN_LEN:
+            continue
+        bucket = compounds.setdefault(compound, [])
+        for fragment in fragments:
+            if fragment not in bucket:
+                bucket.append(fragment)
+    return compounds
+
+
+def _fragment_weight(doc_count: int, total_files: int) -> float:
+    """Multiplier for a compound fragment's own symbol/content/filename
+    contribution, given how many of the run's discovered files it
+    matches. 1.0 (no suppression) at or below FRAGMENT_RARE_RATIO,
+    falling off proportionally to how far past that bar the fragment
+    sits -- smooth rather than a hard cutoff, and self-correcting per
+    repo: a fragment that is genuinely rare here is left alone no matter
+    which compound it came from.
+    """
+    if total_files <= 0 or doc_count <= 0:
+        return 1.0
+    ratio = doc_count / total_files
+    if ratio <= FRAGMENT_RARE_RATIO:
+        return 1.0
+    return FRAGMENT_RARE_RATIO / ratio
 
 
 def _path_segments(path: str) -> list[str]:
@@ -925,6 +1039,7 @@ def _analyze(
     terms: list[str],
     cache: RunCache | None = None,
     filename_word_counts: dict[str, int] | None = None,
+    term_weights: dict[str, float] | None = None,
 ) -> tuple[float, str, frozenset[str]]:
     """Score a single discovered file against `terms`, returning
     (score, reason, distinct_matched_terms).
@@ -948,6 +1063,13 @@ def _analyze(
     name -- see the comment block above WEIGHT_IMPORTED_SYMBOL. Optional
     for the same standalone-caller reason as `cache`; a missing map is
     treated as "every matched word is unique," i.e. no damping.
+
+    `term_weights` (see _fragment_weight()/detect_compound_fragments()
+    above), when given, multiplies a single term's filename/symbol/content
+    contribution by its entry (missing entries default to 1.0, i.e.
+    unweighted) -- used only to damp a compound-split fragment that turned
+    out to be repo-common; every other caller (including every existing
+    one) omits this and scores exactly as before.
     """
     cache = cache if cache is not None else RunCache()
     filename_score = 0.0
@@ -956,12 +1078,15 @@ def _analyze(
     role_bonus = 0.0
     matched_any = False
 
+    def _term_weight(t: str) -> float:
+        return term_weights.get(t, 1.0) if term_weights else 1.0
+
     # --- filename / path segment match: highest-weight signal ---
     segments = _path_segments(discovered_file.path)
     filename_terms = [t for t in terms if any(has_word_match(seg, t) for seg in segments)]
     if filename_terms:
         filename_score += WEIGHT_FILENAME * sum(
-            _filename_term_weight(t, filename_word_counts) for t in filename_terms
+            _filename_term_weight(t, filename_word_counts) * _term_weight(t) for t in filename_terms
         )
         matched_any = True
 
@@ -983,7 +1108,7 @@ def _analyze(
             node_matched = False
             for t in terms:
                 if has_word_match(node.name, t):
-                    symbol_score += WEIGHT_SYMBOL
+                    symbol_score += WEIGHT_SYMBOL * _term_weight(t)
                     matched_any = True
                     node_matched = True
                     symbol_terms.add(t)
@@ -1001,7 +1126,7 @@ def _analyze(
         for t in terms:
             count = count_word_matches(content, t)
             if count > 0:
-                content_score += min(CONTENT_CAP, CONTENT_MULT * math.log(1 + count))
+                content_score += min(CONTENT_CAP, CONTENT_MULT * math.log(1 + count)) * _term_weight(t)
                 matched_any = True
                 content_term_counts[t] = count
 
@@ -1209,6 +1334,7 @@ def expand_transitively(
     cache: RunCache | None = None,
     terms: list[str] | None = None,
     filename_word_counts: dict[str, int] | None = None,
+    term_weights: dict[str, float] | None = None,
 ) -> tuple[list[ContextItem], int]:
     """Expand `seed_items` across the first-party Python import graph, both
     directions (files a seed imports, and files that import a seed).
@@ -1220,6 +1346,12 @@ def expand_transitively(
     only so this stays callable standalone (tests, and any caller with no
     task in hand); without it every reached file has an own-score of 0.0
     and is ranked on the relationship bonus alone.
+
+    `term_weights` (see _analyze()) is threaded through so a reached
+    file's own-score is damped for a compound fragment exactly the same
+    way a seed's is -- otherwise a file reached only through import edges
+    could still be inflated by "api"/"test"-style noise the seed pass
+    already learned to distrust.
 
     Cycle-safe: a `visited` set (seeds plus anything already expanded) is
     checked before a file is ever added as a candidate, so a cycle in the
@@ -1236,7 +1368,7 @@ def expand_transitively(
         imports it. Zero when the caller gave no terms."""
         if not terms:
             return 0.0
-        score, _reason, _matched = _analyze(py_files[path], terms, cache, filename_word_counts)
+        score, _reason, _matched = _analyze(py_files[path], terms, cache, filename_word_counts, term_weights)
         return score
 
     seed_paths = {item.path for item in seed_items}
@@ -1901,14 +2033,18 @@ def score_file(
     discovered_file: DiscoveredFile,
     terms: list[str],
     filename_word_counts: dict[str, int] | None = None,
+    term_weights: dict[str, float] | None = None,
 ) -> float:
     """Score `discovered_file` against `terms`. See module docstring for
     the weighting scheme. `filename_word_counts` is optional -- see
     _analyze()'s docstring; omitting it scores as if every filename word
     matched were unique to the repo (the pre-rarity-fix behavior), which
     is what existing single-file callers, including tests, already expect.
+    `term_weights` is likewise optional -- see _analyze()'s docstring.
     """
-    score, _reason, _matched_terms = _analyze(discovered_file, terms, filename_word_counts=filename_word_counts)
+    score, _reason, _matched_terms = _analyze(
+        discovered_file, terms, filename_word_counts=filename_word_counts, term_weights=term_weights
+    )
     return score
 
 
@@ -1936,6 +2072,20 @@ def select(
     """
     cache = cache if cache is not None else RunCache()
     terms = tokenize(task)
+
+    # Compound-fragment handling (see detect_compound_fragments() /
+    # _fragment_weight() above): a task word like "OpenAPI" or
+    # "TestClient" splits into fragments tokenize() already contributes
+    # ("open"/"api", "test"/"client"). The compound itself is added here
+    # as one more term -- a rare, specific signal in its own right. Empty
+    # for the overwhelming majority of tasks (no PascalCase compound
+    # mentioned), in which case everything below this block is a no-op
+    # and select() runs exactly one scoring pass, as before.
+    compounds = detect_compound_fragments(task)
+    for compound in compounds:
+        if compound not in terms:
+            terms.append(compound)
+
     # Built once per run from the paths discover() already returned -- no
     # extra file reads -- and shared across every file's _analyze() call
     # below so a repo-wide naming convention (page.tsx, __init__.py, ...)
@@ -1959,6 +2109,30 @@ def select(
         for t in matched_terms:
             term_file_counts[t] = term_file_counts.get(t, 0) + 1
 
+    # If any compound fragment turned out to be repo-common (see
+    # _fragment_weight()), re-score with its contribution damped. This is
+    # the only place a second full scoring pass happens, and only when the
+    # task actually named a compound whose fragment proved generic here --
+    # term_file_counts (the fragment's real document frequency in *this*
+    # repo, just computed above) is exactly the signal _fragment_weight()
+    # needs, so no separate corpus scan is required.
+    total_files = len(discovered)
+    fragment_terms = {f for fragments in compounds.values() for f in fragments}
+    term_weights = {
+        f: _fragment_weight(term_file_counts.get(f, 0), total_files)
+        for f in fragment_terms
+        if f not in compounds  # never damp a term that is itself a compound
+    }
+    term_weights = {t: w for t, w in term_weights.items() if w < 1.0}
+
+    if term_weights:
+        scored = []
+        for discovered_file in discovered:
+            score, reason, matched_terms = _analyze(
+                discovered_file, terms, cache, filename_word_counts, term_weights
+            )
+            scored.append((score, discovered_file, reason, matched_terms))
+
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
 
     # Stable rank: score descending, tie-break on path ascending for
@@ -1981,7 +2155,7 @@ def select(
     ]
 
     expanded_items, _expansion_over_cap_count = expand_transitively(
-        seed_items, discovered, cache, terms, filename_word_counts
+        seed_items, discovered, cache, terms, filename_word_counts, term_weights or None
     )
 
     # Merge seeds and expanded items into a single ranking -- score
