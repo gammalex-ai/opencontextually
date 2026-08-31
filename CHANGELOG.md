@@ -60,7 +60,7 @@ quotes.
   filter drops the second condition"*, django's `contrib/admin/filters.py`
   outranks the ORM. Term-rarity weighting was measured and made other
   repositories worse. Tracked in
-  [#6](https://github.com/gammalex-ai/opencontextually/issues/6) and pinned
+  [#3](https://github.com/gammalex-ai/opencontextually/issues/3) and pinned
   by a regression test.
 - A repository holding more than one copy of something defeats ranking, in
   three forms found by the held-out run: a bundled previous major version

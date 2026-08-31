@@ -245,7 +245,7 @@ entire reason for holding them out:
 - **Vocabulary collisions**, as on django: rich ranks `progress.py`
   (`ProgressColumn`) first for a table-width task, and scrapy misses its
   own `test_dupefilters.py`. Tracked as
-  [issue #6](https://github.com/gammalex-ai/opencontextually/issues/6).
+  [issue #3](https://github.com/gammalex-ai/opencontextually/issues/3).
 
 ### The corpus
 

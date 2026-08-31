@@ -29,7 +29,7 @@ Rust or Java repository is worth more than another Python one right now.
 These are real, reproducible, and unfixed. Each has evidence in the repo.
 
 **Vocabulary collisions across subsystems.**
-[#6](https://github.com/gammalex-ai/opencontextually/issues/6). Asked
+[#3](https://github.com/gammalex-ai/opencontextually/issues/3). Asked
 "queryset filter drops the second condition", django ranks
 `contrib/admin/filters.py` — admin UI list filters — first, because it uses
 the task's words more densely than the ORM does. Term-rarity (IDF)
