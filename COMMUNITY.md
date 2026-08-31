@@ -13,7 +13,7 @@ to phrase, and agents we do not run.
 
 | | |
 | --- | --- |
-| **Discord** | [Join the server](DISCORD_INVITE_URL) — questions, half-formed ideas, and showing off what you built |
+| **Discord** | Opening shortly — the invite lands here, and the channel map below is what you will find |
 | **GitHub Discussions** | [Ask or propose](https://github.com/gammalex-ai/opencontextually/discussions) — anything that benefits from being searchable later |
 | **Issues** | [Report something concrete](https://github.com/gammalex-ai/opencontextually/issues) — a wrong selection, a crash, a benchmark case, an integration |
 

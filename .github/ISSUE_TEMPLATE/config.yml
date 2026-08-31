@@ -1,8 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Discord
-    url: DISCORD_INVITE_URL
-    about: Questions, ideas in progress, and showing what you built.
   - name: GitHub Discussions
     url: https://github.com/gammalex-ai/opencontextually/discussions
     about: Anything worth being searchable later — questions, proposals, design debate.

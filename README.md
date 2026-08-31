@@ -6,7 +6,8 @@
 
 **Give your coding agent the context it should read before it starts working.**
 
-[**Quickstart**](#quickstart) · [**Discord**](DISCORD_INVITE_URL) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md)
+[**Quickstart**](#quickstart) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md) · [**Community**](COMMUNITY.md)
+<!-- Discord: add `[**Discord**](<invite>) · ` after Quickstart once the invite exists. -->
 
 OpenContextually turns a task into a small, ranked, explainable context
 package from your repository. It is not another coding agent — it is the
@@ -18,10 +19,14 @@ open context layer *before* the agent.
 ## Quickstart
 
 ```bash
-pip install opencontextually
+pip install git+https://github.com/gammalex-ai/opencontextually
 
 gctx "fix the authentication bug"
 ```
+
+> Not on PyPI yet. When the first release lands this becomes
+> `pip install opencontextually`; until then the line above is the one that
+> works. Python 3.10+, one runtime dependency.
 
 **No model. No API key. No network. No database. No setup.** One dependency.
 The same repository and task produce byte-identical output every time.
@@ -117,16 +122,17 @@ below.
 ## Install
 
 ```bash
-pip install opencontextually
+pip install git+https://github.com/gammalex-ai/opencontextually
 ```
 
-Python 3.10+, one runtime dependency. To work on OpenContextually itself,
-or to run it before the first PyPI release lands, install from a clone:
+Python 3.10+, one runtime dependency. PyPI release pending — this becomes
+`pip install opencontextually` once it is published. To work on
+OpenContextually itself:
 
 ```bash
 git clone https://github.com/gammalex-ai/opencontextually
 cd opencontextually
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ## Using it
