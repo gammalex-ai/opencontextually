@@ -9,13 +9,13 @@ package from your repository. It is not another coding agent — it is the
 context layer before the agent.
 
 ```mermaid
-flowchart LR
-    A["Your task<br/>fix the authentication bug"] --> B["SELECT<br/>find likely context"]
-    B --> C["FOLLOW<br/>traverse code relationships"]
-    C --> D["BOUND<br/>keep what's useful"]
-    D --> E["CHECK<br/>surface gaps and conflicts"]
-    E --> F["EXPLAIN<br/>show why each file is here"]
-    F --> G["Task-ready context<br/>for you or your agent"]
+flowchart TB
+    T(["your task<br/>fix the authentication bug"]) --> OC
+    subgraph OC ["OpenContextually · local · deterministic · no model"]
+      direction LR
+      S["SELECT<br/>likely files"] --> F["FOLLOW<br/>imports"] --> B["BOUND<br/>repo limits"] --> C["CHECK<br/>gaps + conflicts"] --> E["EXPLAIN<br/>why each file"]
+    end
+    OC --> R(["task-ready context<br/>every file with a reason"])
 ```
 
 **No model. No API key. No network. No database. No setup.** One dependency.
