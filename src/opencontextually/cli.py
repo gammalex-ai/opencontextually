@@ -1,4 +1,4 @@
-"""CLI entry point for the `opencontextually` and `octx` console scripts.
+"""CLI entry point for the `gctx`, `octx`, and `opencontextually` console scripts.
 
 No subcommands: one positional task, one --root flag, plain-text output via
 ContextPackage.render() -- the only rendering path in the codebase.
@@ -48,9 +48,26 @@ class _FriendlyArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
+# The command is installed under three names (see pyproject.toml): `gctx`,
+# the alias `octx`, and the spelled-out `opencontextually`. Usage text and
+# error messages should name whichever one the user actually typed, so this
+# reads argv[0] rather than hardcoding a single spelling -- telling someone
+# who ran `octx` to fix their `gctx` invocation would be its own small lie.
+# argparse's own default does the same thing, but falls down for `python -m
+# opencontextually.cli`, where argv[0] is a path ending in "cli.py"; those
+# module-style invocations fall back to the primary name.
+_MODULE_INVOCATION_NAMES = {"cli.py", "__main__.py", "-c", ""}
+DEFAULT_PROG = "gctx"
+
+
+def _invoked_as() -> str:
+    name = Path(sys.argv[0]).name if sys.argv else ""
+    return DEFAULT_PROG if name in _MODULE_INVOCATION_NAMES else name
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _FriendlyArgumentParser(
-        prog="octx",
+        prog=_invoked_as(),
         description=(
             "Select the local files relevant to a task, bounded to a "
             "project root, with a reason for every inclusion."

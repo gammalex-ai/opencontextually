@@ -1,6 +1,6 @@
 """The README's flagship example must be the tool's real output.
 
-The README opens with `octx "fix the authentication bug"` run against
+The README opens with `gctx "fix the authentication bug"` run against
 `examples/auth_bug/`, presented as "the real, unedited output". It drifted:
 the exclusion-summary rewrite changed that footer, and the README kept the
 old one-line `below_threshold=21, binary=0, ...` form for several releases.

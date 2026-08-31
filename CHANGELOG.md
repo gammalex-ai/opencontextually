@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.1.1] - 2026-08-30
 
+### Changed
+
+- **Primary CLI renamed to `gctx` (GammaLex Context); `octx` and
+  `opencontextually` remain supported aliases.** All three are installed and
+  behave identically, so anything already calling `octx` keeps working —
+  scripts, shell aliases, and CI invocations need no change. Documentation
+  and examples now show `gctx`; if you have seen older docs using `octx`,
+  they are still correct.
+- Usage text and error messages name whichever command was actually
+  invoked, instead of always printing `octx`. Running `octx --help` says
+  `octx`, `gctx --help` says `gctx`.
+- The MCP server entry point is **unchanged**: `opencontextually-mcp`.
+
 ### Fixed
 
 - `configuration_discrepancy` no longer reads JSON/YAML **test fixtures as

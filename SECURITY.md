@@ -3,7 +3,7 @@
 ## What this tool reads
 
 OpenContextually is a local, offline file scanner. When you run
-`get_context(task)` / `octx`, it walks the given project root on disk and
+`get_context(task)` / `gctx`, it walks the given project root on disk and
 reads file contents to select, rank, and excerpt files relevant to `task`.
 
 It does **not** blanket-exclude dot-files or dot-directories. `.env`,
@@ -16,7 +16,7 @@ files if they exist and are not gitignored.
 
 ## Redaction is lexical and best-effort — not a guarantee
 
-Before any excerpt is emitted (in `octx` plain-text output, `--json`, or
+Before any excerpt is emitted (in `gctx` plain-text output, `--json`, or
 the MCP tool), it passes through a redactor that masks values on
 secret-shaped keys (`key`, `token`, `secret`, `password`, `credential`,
 `api_key`, and similar) and standalone high-entropy strings. Key names and
