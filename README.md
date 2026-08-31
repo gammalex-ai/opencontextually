@@ -5,7 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-**Give your coding agent the context it should read before it starts working.**
+**Your agent can write the code. The harder problem is making sure it
+reads the right code first.**
 
 [**Quickstart**](#quickstart) · [**Discord**](https://discord.gg/ZNqyQtz5cV) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md) · [**Community**](COMMUNITY.md)
 
@@ -76,6 +77,22 @@ Three things happened beyond ranking:
   `← via` marker records that edge.
 - **A config/doc disagreement was surfaced** — 60 minutes against 30.
 - **Every file carries a reason,** and everything excluded is accounted for.
+
+## Try it on something real
+
+Don't invent a demo task. Point it at a repository you already know:
+
+```bash
+gctx "where does authentication actually happen?"
+gctx "what will break if I change the User model?"
+gctx "how is rate limiting configured and tested?"
+gctx "why is this migration failing?"
+gctx "what should I read before changing the API response schema?"
+```
+
+Run it from the root of a project you actually work in. The output above
+was real and unedited; the output you get will be too — and you'll know
+immediately whether it's right, because it's your own code.
 
 ## Search finds matches. Context needs relationships.
 
