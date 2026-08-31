@@ -4,6 +4,49 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.3] - 2026-08-31
+
+### Fixed
+
+- **`gctx --version` (and `octx`/`opencontextually --version`) reported a
+  stale `0.2.0`, three releases behind the package actually installed.**
+  `__version__` was a hardcoded string in `__init__.py` that had drifted
+  from `pyproject.toml`'s real version; the 0.2.2 wheel on PyPI still
+  carries this bug, since the fix in this release is the first to ship
+  it. `__version__` now reads `importlib.metadata.version("opencontextually")`
+  at import time, so `pyproject.toml`'s version is the single source of
+  truth and cannot drift again — a source checkout with no installed
+  package metadata falls back to `"0.0.0.dev0"`. Covered by a regression
+  test (`tests/test_smoke.py::test_version_matches_installed_package_metadata`)
+  and, from this release on, a release-pipeline step that installs the
+  actual built wheel into a clean virtualenv and checks its installed
+  metadata, its `__version__`, and its CLI `--version` output all agree —
+  verifying the real published artifact, not a proxy for it.
+
+- **Translated documentation trees were scored as independent content.**
+  A repo mirroring its docs across languages under `docs/<locale>/...`
+  (fastapi ships 13) could have one relevant page consume most of the
+  result list — 13 of 18 slots on one real query — once per language
+  copy. Locale-mirrored trees are now detected structurally and collapsed
+  to one representative, the same way byte-identical duplicates already
+  collapse.
+
+- **Generic filler words inflated unrelated files' relevance.** Words
+  like "where", "using", "even", "though", and "itself" carried no
+  code-relevant signal but matched every prose-heavy docstring file by
+  sheer volume, keeping the same file pinned to the top of unrelated
+  queries. Added to the stopword list.
+
+- **Compound product/class names were only visible to scoring as their
+  split fragments.** `OpenAPI` → `open` + `api`, `TestClient` → `test` +
+  `client`, `FastAPI` → `fast` + `api` — in a project named FastAPI,
+  `"api"` and `"test"` alone are nearly useless discriminators, matching
+  almost every file. The compound is now preserved as its own term, and
+  each fragment's score contribution is suppressed in proportion to how
+  common it actually is in the *scanned repo's own content* — not a
+  hardcoded word list, so this doesn't overfit to any one project or
+  affect ordinary camelCase identifiers.
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed

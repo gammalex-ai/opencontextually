@@ -50,6 +50,34 @@ jobs:
           fi
       - run: python -m build
       - run: twine check dist/*
+      # --- bug fix: __version__ drifted from the published wheel's own
+      # metadata (0.2.2 shipped with a hardcoded __version__ = "0.2.0") ---
+      #
+      # `pytest` in the `test` job above runs against an *editable* install
+      # (`pip install -e .`), which reads version metadata from the source
+      # checkout's own generated dist-info -- not from the wheel this job
+      # is about to upload to PyPI. This step installs the actual built
+      # artifact into a clean, fresh virtualenv (no editable install, no
+      # source checkout on the path) and checks that its own runtime
+      # metadata, its `__version__`, and its CLI's `--version` output all
+      # agree -- the same three values a user runs after `pip install
+      # opencontextually` would see, verified against the literal file
+      # about to be published rather than a proxy for it.
+      - name: Verify the built wheel's version end to end
+        run: |
+          python -m venv /tmp/wheel-smoke-venv
+          /tmp/wheel-smoke-venv/bin/pip install --force-reinstall dist/*.whl
+
+          PACKAGE_VERSION="$(/tmp/wheel-smoke-venv/bin/python -c "import importlib.metadata as m; print(m.version('opencontextually'))")"
+          MODULE_VERSION="$(/tmp/wheel-smoke-venv/bin/python -c "import opencontextually; print(opencontextually.__version__)")"
+          CLI_VERSION="$(/tmp/wheel-smoke-venv/bin/gctx --version | awk '{print $2}')"
+
+          echo "package metadata: $PACKAGE_VERSION"
+          echo "opencontextually.__version__: $MODULE_VERSION"
+          echo "gctx --version: $CLI_VERSION"
+
+          test "$PACKAGE_VERSION" = "$MODULE_VERSION"
+          test "$PACKAGE_VERSION" = "$CLI_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
