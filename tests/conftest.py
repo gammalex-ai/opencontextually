@@ -11,10 +11,20 @@ The failure this prevents is specific and was hit for real: `pip install -e .`
 writes a .pth file naming the clone it was installed from. Working in a git
 worktree, `pytest` then resolves `opencontextually` to the *original* clone.
 Every test passes, and none of them touched the code being changed.
+
+`pythonpath` and the guard below only govern the *in-process* import. Several
+tests spawn a subprocess (`sys.executable -m opencontextually.cli`, and the
+MCP server test), and a fresh interpreter re-reads the editable install's
+.pth file -- so those tests kept resolving the wrong checkout even once the
+in-process import was correct. This was invisible until the version strings
+of the two checkouts diverged, at which point `--version` returned the other
+tree's version. `pytest_configure` therefore also exports PYTHONPATH, which
+every subprocess inherits.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -38,4 +48,15 @@ def pytest_configure(config: pytest.Config) -> None:
             "git worktree. Re-run with:\n\n"
             f'    PYTHONPATH="{REPO_ROOT / "src"}" pytest\n\n'
             "or reinstall the package from this checkout."
+        )
+
+    # Every subprocess a test spawns starts a fresh interpreter, which
+    # re-reads the editable install's .pth file and would resolve the wrong
+    # checkout again. Exporting PYTHONPATH here is inherited by all of them.
+    # Prepended, never replacing, so an existing PYTHONPATH still applies.
+    src = str(REPO_ROOT / "src")
+    existing = os.environ.get("PYTHONPATH", "")
+    if src not in existing.split(os.pathsep):
+        os.environ["PYTHONPATH"] = (
+            src + os.pathsep + existing if existing else src
         )
