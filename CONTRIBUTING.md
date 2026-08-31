@@ -14,12 +14,26 @@ pip install -e ".[dev]"
 pytest
 ```
 
-190 tests, sub-second locally. To also exercise the MCP server module,
+232 tests, sub-second locally. To also exercise the MCP server module,
 install the `mcp` extra first:
 
 ```
 pip install -e ".[dev,mcp]"
 ```
+
+`pytest` always tests *this* checkout. `pip install -e .` writes a path
+file naming the clone it was installed from, and that path otherwise wins
+over the repository you are sitting in — so working in a second clone or a
+git worktree, `pytest` could pass while testing entirely different code. Two
+things prevent that, and neither needs anything from your shell:
+
+- `pythonpath = ["src"]` in `pyproject.toml` puts this checkout's source
+  first on `sys.path` for every run.
+- `tests/conftest.py` verifies the imported package really is this one, and
+  stops the run with an explanation if it is not.
+
+If you ever see that error, the escape hatch it prints is
+`PYTHONPATH="$PWD/src" pytest`.
 
 ## CI
 
