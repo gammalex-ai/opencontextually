@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.1.1] - 2026-08-30
 
+### Added
+
+- `gctx` (GammaLex Context) is the primary CLI command. `octx` and
+  `opencontextually` remain installed and behave identically, so nothing
+  that already calls `octx` breaks. Usage and error messages name whichever
+  command was actually invoked rather than a hardcoded one. The MCP entry
+  point is unchanged (`opencontextually-mcp`).
+
 ### Fixed
 
 - `configuration_discrepancy` no longer reads JSON/YAML **test fixtures as

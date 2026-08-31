@@ -24,7 +24,7 @@ The same repository and task produce byte-identical output every time.
 ## What it looks like
 
 ```
-octx "fix the authentication bug"
+gctx "fix the authentication bug"
 ```
 
 Run from `examples/auth_bug/` — a small fixture with an auth module, a
@@ -113,14 +113,16 @@ Not yet on PyPI, so install from a clone. Python 3.10+.
 
 | Command | What you get |
 | --- | --- |
-| `octx "task"` | Ranked files, each with a reason |
-| `octx "task" -v` | Adds the code excerpt that justified each file |
-| `octx "task" --all` | Every included file, not just the top slice |
-| `octx "task" --json` | Full machine representation, for handing to an agent |
-| `octx "task" --root PATH` | Search somewhere other than the current directory |
+| `gctx "task"` | Ranked files, each with a reason |
+| `gctx "task" -v` | Adds the code excerpt that justified each file |
+| `gctx "task" --all` | Every included file, not just the top slice |
+| `gctx "task" --json` | Full machine representation, for handing to an agent |
+| `gctx "task" --root PATH` | Search somewhere other than the current directory |
 
-`opencontextually` is a longer alias for `octx`. Flags compose (`-v --all`).
-`--json` is unaffected by `-v`/`--all` — it is always full fidelity.
+`gctx` is short for *GammaLex Context*. The same command is also installed
+as `octx` (the original name, kept working) and `opencontextually`. Flags
+compose (`-v --all`); `--json` is unaffected by either and is always full
+fidelity.
 
 Write tasks the way you'd describe the bug. Naming a specific behavior or
 symbol beats a directory-shaped noun.
@@ -158,7 +160,7 @@ Point your MCP client at the `opencontextually-mcp` command:
 ```
 
 It exposes exactly one tool — `get_context(task, root=".")` — returning the
-same shape as `octx --json`.
+same shape as `gctx --json`.
 
 ## Tested on real repositories
 
@@ -180,7 +182,7 @@ documentation conventions:
 Larger private repositories in the corpus run ~42,000 files in about two
 seconds.
 
-For `octx "option prompt does not hide the input"` against click, the top
+For `gctx "option prompt does not hide the input"` against click, the top
 three are `core.py` (*defines Option*), `decorators.py` (*defines option*),
 and `termui.py` (*defines `_mask_hidden_input`*) — the third being a private
 helper whose name no part of the task literally matches.
