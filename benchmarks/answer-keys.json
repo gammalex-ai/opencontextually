@@ -1,0 +1,178 @@
+{
+  "_comment": [
+    "Hand-checked answer keys for the corpus tasks: the files that actually",
+    "implement or test the behaviour each task names, read out of each project",
+    "at the commit pinned in corpus.example.json.",
+    "",
+    "`group` is the honest part. The six 'tuned' repositories were used while",
+    "tuning ranking constants (RELATIONSHIP_BONUS, HISTORY_DOC_PENALTY,",
+    "DISCOVERY_LIMIT), so results on them are fitted to some unknown degree.",
+    "The four 'held_out' keys were written before OpenContextually was ever",
+    "run against those repositories on these tasks, and nothing was tuned",
+    "afterwards. Quote both numbers or neither.",
+    "",
+    "A key lists what a developer would need open to fix the thing, not every",
+    "file that mentions it: the implementation, the dependency the fix reaches",
+    "through, the configuration contract where there is one, and the test.",
+    "",
+    "The 'held_out_2' group is a second reserved set, added after the first held-out run exposed the duplicate-copy failure class. Their keys were written and committed before the fix for that class existed, so they measure whether it generalizes rather than whether it was fitted.",
+    "",
+    "Result of the held_out_2 round: the near-duplicate document family cap it was reserved for was REVERTED. It left held_out_2 unchanged (11/13, 10/13), and auditing what it removed showed it collapsing genuinely different pages that share a universal filename -- black's docs/index.md against docs/contributing/index.md. The legacy/vendored tree penalty from the same round was kept: it recovers pydantic's main.py and its audit is clean. held_out_2 is now spent as evidence and serves as regression data."
+  ],
+  "keys": [
+    {
+      "repo": "httpx",
+      "group": "tuned",
+      "task": "redirect loses the authorization header",
+      "files": {
+        "httpx/_client.py": "direct task match (_build_redirect_request / _redirect_headers)",
+        "httpx/_auth.py": "imported dependency (builds the Authorization header)",
+        "httpx/_models.py": "imported dependency (Headers)",
+        "tests/client/test_redirects.py": "associated test"
+      }
+    },
+    {
+      "repo": "requests",
+      "group": "tuned",
+      "task": "session cookie persists across redirects",
+      "files": {
+        "src/requests/sessions.py": "direct task match (resolve_redirects)",
+        "src/requests/cookies.py": "imported dependency (extract_cookies_to_jar)",
+        "src/requests/models.py": "imported dependency (Response.cookies)",
+        "tests/test_requests.py": "associated test"
+      }
+    },
+    {
+      "repo": "flask",
+      "group": "tuned",
+      "task": "session cookie is not set on redirect",
+      "files": {
+        "src/flask/sessions.py": "direct task match (save_session / set_cookie)",
+        "src/flask/app.py": "imported dependency (calls save_session)",
+        "tests/test_basic.py": "associated test"
+      }
+    },
+    {
+      "repo": "click",
+      "group": "tuned",
+      "task": "option prompt does not hide the input",
+      "files": {
+        "src/click/termui.py": "direct task match (prompt(hide_input=...))",
+        "src/click/core.py": "imported dependency (Option.prompt_for_value)",
+        "tests/test_termui.py": "associated test"
+      }
+    },
+    {
+      "repo": "sqlfluff",
+      "group": "tuned",
+      "task": "indentation rule fires on a templated line",
+      "files": {
+        "src/sqlfluff/rules/layout/LT02.py": "direct task match (the indentation rule)",
+        "src/sqlfluff/utils/reflow/reindent.py": "imported dependency (indent computation)"
+      }
+    },
+    {
+      "repo": "django",
+      "group": "tuned",
+      "task": "queryset filter drops the second condition",
+      "files": {
+        "django/db/models/query.py": "direct task match (_filter_or_exclude)",
+        "django/db/models/sql/query.py": "imported dependency (add_q)",
+        "django/db/models/query_utils.py": "imported dependency (Q combines conditions)"
+      }
+    },
+    {
+      "repo": "black",
+      "group": "held_out",
+      "task": "string normalization changes the wrong quotes",
+      "files": {
+        "src/black/strings.py": "direct task match (normalize_string_quotes)",
+        "src/black/linegen.py": "imported dependency (calls it while generating lines)",
+        "src/black/mode.py": "configuration contract (string_normalization flag)",
+        "tests/test_black.py": "associated test"
+      }
+    },
+    {
+      "repo": "rich",
+      "group": "held_out",
+      "task": "table column width ignores the terminal size",
+      "files": {
+        "rich/table.py": "direct task match (_calculate_column_widths)",
+        "rich/measure.py": "imported dependency (Measurement.with_maximum)",
+        "rich/console.py": "imported dependency (terminal size detection)",
+        "tests/test_table.py": "associated test"
+      }
+    },
+    {
+      "repo": "pydantic",
+      "group": "held_out",
+      "task": "field validator not called on assignment",
+      "files": {
+        "pydantic/main.py": "direct task match (__setattr__ / validate_assignment handler)",
+        "pydantic/functional_validators.py": "imported dependency (field_validator)",
+        "pydantic/config.py": "configuration contract (validate_assignment)",
+        "tests/test_validators.py": "associated test"
+      }
+    },
+    {
+      "repo": "fastapi",
+      "group": "held_out",
+      "task": "dependency override not applied in nested routers",
+      "files": {
+        "fastapi/routing.py": "direct task match (include_router / dependency_overrides_provider)",
+        "fastapi/dependencies/utils.py": "imported dependency (solve_dependencies applies overrides)",
+        "fastapi/applications.py": "configuration contract (dependency_overrides)",
+        "tests/test_dependency_overrides.py": "associated test"
+      }
+    },
+    {
+      "repo": "attrs",
+      "group": "held_out_2",
+      "github": "python-attrs/attrs",
+      "commit": "764bf92a1c96abe4615b59f3e5a7b738b0340a94",
+      "task": "frozen class still allows attribute assignment",
+      "files": {
+        "src/attr/_make.py": "direct task match (_frozen_setattrs)",
+        "src/attr/exceptions.py": "imported dependency (FrozenInstanceError)",
+        "src/attr/_next_gen.py": "imported dependency (@define frozen path)",
+        "tests/test_make.py": "associated test"
+      }
+    },
+    {
+      "repo": "urllib3",
+      "group": "held_out_2",
+      "github": "urllib3/urllib3",
+      "commit": "85a8a9cfad3398bc504d088233d0a11af219a82a",
+      "task": "retry does not honor the backoff factor",
+      "files": {
+        "src/urllib3/util/retry.py": "direct task match (get_backoff_time)",
+        "src/urllib3/connectionpool.py": "imported dependency (drives Retry between attempts)",
+        "test/test_retry.py": "associated test"
+      }
+    },
+    {
+      "repo": "pytest",
+      "group": "held_out_2",
+      "github": "pytest-dev/pytest",
+      "commit": "2cd217e5b8842f842bc6e25514db8946b3108b2d",
+      "task": "monkeypatch does not undo an environment variable",
+      "files": {
+        "src/_pytest/monkeypatch.py": "direct task match (setenv / delenv / undo)",
+        "testing/test_monkeypatch.py": "associated test"
+      }
+    },
+    {
+      "repo": "scrapy",
+      "group": "held_out_2",
+      "github": "scrapy/scrapy",
+      "commit": "53eb8d60bcd0160633f6513478f958ed5a457363",
+      "task": "duplicate requests are not filtered",
+      "files": {
+        "scrapy/dupefilters.py": "direct task match (RFPDupeFilter.request_seen)",
+        "scrapy/core/scheduler.py": "imported dependency (consults the dupefilter)",
+        "scrapy/settings/default_settings.py": "configuration contract (DUPEFILTER_CLASS)",
+        "tests/test_dupefilters.py": "associated test"
+      }
+    }
+  ]
+}

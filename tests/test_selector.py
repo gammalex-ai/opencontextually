@@ -260,21 +260,39 @@ def test_large_data_file_still_demoted_below_source(tmp_path):
     assert source_score > data_score
 
 
-def test_select_caps_at_max_seeds(tmp_path):
-    from opencontextually.selector import MAX_SEEDS
+def test_select_caps_at_max_included(tmp_path):
+    from opencontextually.selector import MAX_INCLUDED
 
-    # Distinct content per file -- this test is about the MAX_SEEDS cap,
+    # Distinct content per file -- this test is about the delivery cap,
     # not duplicate collapsing (see test_bugfixes.py for that), so each
     # file must be byte-distinct or discovery's duplicate collapsing would
     # drop all but one before select() ever sees them.
-    for i in range(MAX_SEEDS + 5):
+    for i in range(MAX_INCLUDED + 5):
         _write(tmp_path / f"auth_{i}.py", f"# auth file {i}\n")
 
     discovered, _reasons = discover(tmp_path)
     items, extra, _stats = select(discovered, "fix the auth bug")
 
-    assert len(items) == MAX_SEEDS
+    # One cap decides what ships: candidate discovery is generous
+    # (DISCOVERY_LIMIT), delivery is strict.
+    assert len(items) == MAX_INCLUDED
     assert extra["over_cap"] == 5
+
+
+def test_exclusion_buckets_account_for_every_scanned_file(tmp_path):
+    # Regression test for double-counted exclusions: included plus every
+    # exclusion bucket must equal the number of files scanned, so a
+    # package can never claim to have excluded more files than exist.
+    for i in range(MAX_INCLUDED_OVERSHOOT := 25):
+        _write(tmp_path / f"auth_{i}.py", f"# auth file {i}\n")
+    for i in range(5):
+        _write(tmp_path / f"unrelated_{i}.py", f"# nothing to do with it {i}\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, extra, _stats = select(discovered, "fix the auth bug")
+
+    assert len(items) + sum(extra.values()) == len(discovered)
+    assert extra["over_cap"] == MAX_INCLUDED_OVERSHOOT - len(items)
 
 
 def test_select_ignores_syntax_error_python_file(tmp_path):
@@ -301,11 +319,12 @@ def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
         tmp_path / "src" / "users" / "session.py",
         "class SessionStore:\n    pass\n",
     )
-    # A weak seed: content-only match, no filename or symbol hit, so it
-    # scores far below both middleware.py and the decayed session.py.
+    # A weak seed: content-only match, no filename or symbol hit and no
+    # role bonus, so it scores below both middleware.py and the
+    # relationship-reached session.py.
     _write(
-        tmp_path / "docs" / "notes.md",
-        "authentication is mentioned here exactly once.\n",
+        tmp_path / "src" / "misc" / "banner.py",
+        "# authentication is mentioned here, and authentication again\nBANNER = 1\n",
     )
 
     discovered, _reasons = discover(tmp_path)
@@ -316,12 +335,12 @@ def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
 
     paths_in_order = [item.path for item in items]
     assert "src/users/session.py" in paths_in_order
-    assert "docs/notes.md" in paths_in_order
+    assert "src/misc/banner.py" in paths_in_order
     # session.py (import-reached from a strong seed) must outrank the
     # weak content-only seed, even though it was appended after seeds by
     # the old (buggy) code.
     assert paths_in_order.index("src/users/session.py") < paths_in_order.index(
-        "docs/notes.md"
+        "src/misc/banner.py"
     )
 
 
@@ -429,3 +448,115 @@ def test_cli_exits_0_and_prints_render_on_good_root(tmp_path):
     assert result.returncode == 0
     assert "auth.py" in result.stdout
     assert "fix the auth bug" in result.stdout
+
+
+def test_changelog_is_damped_against_a_current_behaviour_task(tmp_path):
+    # A changelog names every feature ever shipped, so it matches almost
+    # any task's vocabulary. It must not outrank the code that implements
+    # the behaviour now -- see HISTORY_DOC_PENALTY.
+    _write(
+        tmp_path / "CHANGELOG.md",
+        "# Changelog\n\n"
+        "## 1.2.0\n- redirect now preserves the authorization header\n"
+        "## 1.1.0\n- redirect handling reworked; authorization header fixes\n"
+        "## 1.0.0\n- initial redirect support, authorization header support\n",
+    )
+    _write(
+        tmp_path / "client.py",
+        "class Client:\n"
+        "    def build_redirect_request(self, request):\n"
+        "        return self.redirect_headers(request)\n"
+        "    def redirect_headers(self, request):\n"
+        "        # drop the authorization header on a cross-origin redirect\n"
+        "        return request.headers\n"
+        "    def is_redirect(self, response):\n"
+        "        return response.status_code in (301, 302)\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "redirect loses the authorization header")
+
+    ranked = [item.path for item in items]
+    assert ranked.index("client.py") < ranked.index("CHANGELOG.md")
+
+
+def test_release_notes_directory_is_damped_too(tmp_path):
+    _write(tmp_path / "docs" / "releases" / "5.0.txt", "redirect handling changed\n" * 20)
+    _write(
+        tmp_path / "handler.py",
+        "def build_redirect():\n"
+        "    return handle_redirect()\n"
+        "def handle_redirect():\n"
+        "    return None\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "redirect handling")
+
+    ranked = [item.path for item in items]
+    assert ranked.index("handler.py") < ranked.index("docs/releases/5.0.txt")
+
+
+def test_a_changelog_still_ranks_when_nothing_else_matches(tmp_path):
+    # Damped, not excluded: when the changelog is the only thing in the
+    # repository that speaks to the task, it is still a real answer.
+    _write(
+        tmp_path / "CHANGELOG.md",
+        "# Changelog\n\n"
+        "## 2.0.0\n- dropped support for the legacy telemetry endpoint\n"
+        "- the legacy telemetry endpoint is gone; use the telemetry sink\n",
+    )
+    _write(tmp_path / "unrelated.py", "def add(a, b):\n    return a + b\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "legacy telemetry endpoint removed")
+
+    assert "CHANGELOG.md" in [item.path for item in items]
+
+
+def test_a_bundled_previous_version_does_not_outrank_current_code(tmp_path):
+    # pydantic ships Pydantic 1 inside Pydantic 2 as `pydantic/v1/`. Asked
+    # about current behaviour, six of eighteen slots went to that tree
+    # while the current implementation was missed entirely.
+    _write(
+        tmp_path / "pkg" / "v1" / "validators.py",
+        "def str_validator(v):\n    return v\n"
+        "def field_validator(v):\n    return v\n"
+        "class Validator:\n"
+        "    def validate_assignment(self, name, value): ...\n",
+    )
+    _write(
+        tmp_path / "pkg" / "main.py",
+        "class Model:\n"
+        "    def _field_setattr_handler(self, name, value):\n"
+        "        if self.model_config.get('validate_assignment'):\n"
+        "            return self._validate_assignment(name, value)\n"
+        "    def _validate_assignment(self, name, value):\n"
+        "        return self.__pydantic_validator__.validate_assignment(name, value)\n"
+        "    def __setattr__(self, name, value):\n"
+        "        return self._field_setattr_handler(name, value)\n",
+    )
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "field validator not called on assignment")
+
+    ranked = [item.path for item in items]
+    assert ranked.index("pkg/main.py") < ranked.index("pkg/v1/validators.py")
+
+
+def test_a_uniform_version_directory_does_not_change_relative_ranking(tmp_path):
+    # The safety property: in a project where *everything* lives under
+    # api/v1/, every file takes the same penalty, so the ranking between
+    # them is untouched. The rule can only matter where an old copy
+    # competes with a current one.
+    _write(
+        tmp_path / "api" / "v1" / "routes.py",
+        "def build_redirect_response():\n    return redirect_headers()\n"
+        "def redirect_headers():\n    return {}\n",
+    )
+    _write(tmp_path / "api" / "v1" / "models.py", "class User:\n    pass\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, _extra, _stats = select(discovered, "redirect response headers")
+
+    assert [item.path for item in items][0] == "api/v1/routes.py"

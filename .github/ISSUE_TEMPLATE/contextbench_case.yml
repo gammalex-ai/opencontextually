@@ -1,0 +1,84 @@
+name: ContextBench case
+description: Propose a repository + task + answer key for the benchmark corpus.
+labels: ["contextbench"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ContextBench measures one thing: does `gctx` select the files a
+        developer would actually need, and leave out the rest.
+
+        The valuable part of a case is the **answer key** — the files
+        someone fixing this would need open. Everything else is
+        bookkeeping. See [benchmarks/README.md](../blob/main/benchmarks/README.md).
+
+        Cases from repositories that are **not Python** are especially
+        wanted; the corpus is currently Python-only.
+  - type: input
+    id: repo
+    attributes:
+      label: Repository
+      description: Must be public and permissively licensed. Link it.
+      placeholder: "https://github.com/owner/name"
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit SHA
+      description: Pinned, so file counts and results stay checkable.
+    validations:
+      required: true
+  - type: input
+    id: language
+    attributes:
+      label: Primary language
+    validations:
+      required: true
+  - type: input
+    id: task
+    attributes:
+      label: Task
+      description: Phrased as a developer would describe the symptom — not a directory name or a file name.
+      placeholder: "session cookie is not set on redirect"
+    validations:
+      required: true
+  - type: textarea
+    id: answer-key
+    attributes:
+      label: Answer key
+      description: |
+        The files someone would need open to fix this, one per line, each
+        with a short reason. Aim for what is genuinely needed — the
+        implementation, the dependency the fix reaches through, the
+        configuration contract if there is one, and the test.
+      placeholder: |
+        src/flask/sessions.py — direct task match (save_session / set_cookie)
+        src/flask/app.py — imported dependency (calls save_session)
+        tests/test_basic.py — associated test
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What gctx returns today
+      description: |
+        Run `gctx "<task>" --root <clone>` at that commit and paste the
+        output. A case where it does well is as useful as one where it
+        fails — the first becomes a regression guard, the second becomes a
+        bug.
+      render: text
+    validations:
+      required: false
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Your read on the result
+      options:
+        - "Good — it found what matters"
+        - "Mixed — found them, but ranked too low to be delivered"
+        - "Bad — missed key files, or selected the wrong subsystem"
+        - "Haven't run it"
+    validations:
+      required: true

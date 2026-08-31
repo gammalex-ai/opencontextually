@@ -98,6 +98,38 @@
       "tasks": [
         "queryset filter drops the second condition"
       ]
+    },
+    {
+      "root": "~/src/attrs",
+      "github": "python-attrs/attrs",
+      "commit": "764bf92a1c96abe4615b59f3e5a7b738b0340a94",
+      "tasks": [
+        "frozen class still allows attribute assignment"
+      ]
+    },
+    {
+      "root": "~/src/urllib3",
+      "github": "urllib3/urllib3",
+      "commit": "85a8a9cfad3398bc504d088233d0a11af219a82a",
+      "tasks": [
+        "retry does not honor the backoff factor"
+      ]
+    },
+    {
+      "root": "~/src/pytest",
+      "github": "pytest-dev/pytest",
+      "commit": "2cd217e5b8842f842bc6e25514db8946b3108b2d",
+      "tasks": [
+        "monkeypatch does not undo an environment variable"
+      ]
+    },
+    {
+      "root": "~/src/scrapy",
+      "github": "scrapy/scrapy",
+      "commit": "53eb8d60bcd0160633f6513478f958ed5a457363",
+      "tasks": [
+        "duplicate requests are not filtered"
+      ]
     }
   ]
 }

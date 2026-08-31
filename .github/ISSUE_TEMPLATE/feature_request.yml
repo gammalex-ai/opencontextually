@@ -23,6 +23,6 @@ body:
     id: proposal
     attributes:
       label: Proposed behavior
-      description: What should `get_context()` / `octx` do instead?
+      description: What should `get_context()` / `gctx` do instead?
     validations:
       required: true

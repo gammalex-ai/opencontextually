@@ -5,9 +5,22 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege, stated here rather than inherited: a fork's pull request
+# should never get a token that can write to this repository.
+permissions:
+  contents: read
+
+# A contributor pushing three times in a minute should not queue three full
+# matrices. Superseded runs on the same ref are cancelled; main is not,
+# so its history keeps a result per commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

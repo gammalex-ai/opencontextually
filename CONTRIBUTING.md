@@ -1,5 +1,19 @@
 # Contributing
 
+Thanks for being here. The fastest ways in:
+
+| I want to… | Go here |
+| --- | --- |
+| Report that an agent read the wrong context | [Context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml) — no code needed |
+| Report a bug in OpenContextually itself | [Bug report](https://github.com/gammalex-ai/opencontextually/issues/new?template=bug_report.yml) |
+| Add a benchmark case from a repo you know | [ContextBench case](https://github.com/gammalex-ai/opencontextually/issues/new?template=contextbench_case.yml) |
+| Tell us about something you built | [Integration](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml) |
+| Find something concrete to work on | [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md) |
+| Ask a question first | [Discord](DISCORD_INVITE_URL) (`#gctx-help`, `#context-engineering`) · [Discussions](https://github.com/gammalex-ai/opencontextually/discussions) |
+
+[COMMUNITY.md](COMMUNITY.md) describes each contribution path in full. This
+file is the mechanics: setup, tests, and what is in scope.
+
 ## Dev setup
 
 ```
@@ -35,12 +49,37 @@ things prevent that, and neither needs anything from your shell:
 If you ever see that error, the escape hatch it prints is
 `PYTHONPATH="$PWD/src" pytest`.
 
-## CI
+## Changing selection
+
+Any change to ranking, exclusion or relationship-following needs a
+measurement, not an argument. Run ContextBench before and after and put
+both numbers in the PR — see [benchmarks/README.md](benchmarks/README.md).
+Two things make a selection PR easy to accept:
+
+- the corpus numbers moved the way you say they did, and you show the
+  cases that moved
+- a regression test that fails without your change
+
+Two things make one hard: "it looks better on my repository", and a change
+tuned against the same cases used to justify it. The corpus separates
+tuned from held-out repositories precisely because that distinction is easy
+to lose.
+
+## CI and merging
 
 Every push and pull request runs `pytest` on Python 3.10, 3.11, 3.12, and
 3.13 via GitHub Actions (`.github/workflows/test.yml`), matching the
-`requires-python = ">=3.10"` claim in `pyproject.toml`. A PR is expected
-to pass on all four before merge.
+`requires-python = ">=3.10"` claim in `pyproject.toml`. All four are
+required before a pull request can merge.
+
+`main` is protected: pull requests only, linear history, no force pushes,
+review from a code owner, and open conversations resolved. Branch your work,
+push, open a PR. Branches are deleted automatically on merge, and you can
+bring yours up to date from the PR page rather than rebasing by hand.
+
+The first pull request from a new contributor needs a maintainer to approve
+the CI run before it starts — that is a GitHub-wide protection against
+workflow abuse, not a comment on your patch.
 
 ## Scope discipline
 
@@ -72,3 +111,14 @@ tests.
 If you're unsure whether something fits, open an issue describing the
 problem it solves for the first developer — not the mechanism — before
 sending a PR.
+
+Integrations are the exception to most of this: they live in *your*
+repository, not this one, and are not bound by the scope rules above. Build
+against `gctx --json` or the MCP server, then
+[tell us](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
+so it can be listed in the README's Ecosystem section.
+
+## Code of conduct
+
+Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+Security reports go through [SECURITY.md](SECURITY.md), not public issues.

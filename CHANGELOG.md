@@ -4,6 +4,74 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **Ranking now scores a file on its own relevance to the task, not on who
+  imports it.** Import expansion used to give a reached file
+  `parent_score * 0.5` with no reference to the task at all, so on httpx all
+  seven of `_models.py`'s import neighbours — `_content.py` and
+  `_decoders.py` among them, which match nothing in *"redirect loses the
+  authorization header"* — outranked `_auth.py`, the file that builds the
+  Authorization header. A reached file now keeps its own score plus a small
+  capped relationship bonus that decays per hop. An import edge answers
+  "should I look at this?", not "this is half as relevant as its
+  neighbour".
+- **Candidate discovery and delivery are separate budgets.** One cap used to
+  decide both how many files were considered and how many shipped.
+  Considering a file is free — every file is already scored — while
+  delivering one costs the reader context. sqlfluff's
+  `rules/layout/LT02.py`, the rule its task names, ranks 16th of 5,451 on
+  its own merits and was cut by a cap of 12 before it could compete.
+- **Changelogs and release notes are damped.** They name every feature ever
+  shipped, so they match almost any task and match it repeatedly — the same
+  problem test files already have. They still rank when nothing else does.
+
+Measured across six pinned repositories with hand-checked answer keys:
+known-relevant files recovered went from 17/19 to 18/19, and files
+surfaced in the default eight-line view from 12/19 to 16/19, with
+compression unchanged.
+
+Those six were also the repositories the constants were tuned against, so
+four more — black, rich, pydantic, fastapi — were held out: keys written
+and committed before the tool was run against them, nothing tuned
+afterwards. They score **11/16 recovered and 9/16 in the default view**,
+against 18/19 and 16/19 on the tuned six. Across all ten: **29/35 (83%)
+and 25/35 (71%)**. The held-out figures are the ones that predict
+behaviour on an unfamiliar repository, and they are the ones the README
+quotes.
+
+### Fixed
+
+- **Exclusion counts no longer double-count.** Three separate cap events
+  were summed on top of a below-threshold count taken over every scored
+  file, so httpx reported "17 relevant · 161 excluded" for 115 scannable
+  files, and described import candidates that never cleared the bar as
+  "relevant files dropped". Every scanned file now lands in exactly one
+  bucket, and included + excluded reconciles with files scanned.
+- **The source distribution is self-testing.** It shipped `tests/` without
+  the `examples/` fixture those tests read, so `pip download` + `pytest`
+  failed 22 tests on a missing directory rather than on anything real.
+
+### Known limitations
+
+- A task's vocabulary can be dense in the wrong subsystem: for *"queryset
+  filter drops the second condition"*, django's `contrib/admin/filters.py`
+  outranks the ORM. Term-rarity weighting was measured and made other
+  repositories worse. Tracked in
+  [#6](https://github.com/gammalex-ai/opencontextually/issues/6) and pinned
+  by a regression test.
+- A repository holding more than one copy of something defeats ranking, in
+  three forms found by the held-out run: a bundled previous major version
+  (six of eighteen slots go to `pydantic/v1/*`, while `main.py` is missed),
+  translated documentation counted once per language (five README
+  translations in rich, three doc languages in fastapi), and benchmark or
+  example trees inside the project itself.
+- `test_reference_gap` reports symbols no test *names*. On black — whose
+  formatting tests are data-driven fixture files — that produced five
+  findings that are literally true and probably not actionable.
+
 ## [0.1.1] - 2026-08-30
 
 ### Changed

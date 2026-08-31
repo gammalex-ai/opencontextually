@@ -8,10 +8,31 @@ version = "0.1.1"
 description = "Give your AI agent the right context before it acts."
 readme = "README.md"
 license = { text = "MIT" }
+authors = [{ name = "GammaLex" }]
+keywords = ["context", "ai", "agent", "llm", "code-search", "mcp", "retrieval"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 requires-python = ">=3.10"
 dependencies = [
     "pathspec",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gammalex-ai/opencontextually"
+Repository = "https://github.com/gammalex-ai/opencontextually"
+Issues = "https://github.com/gammalex-ai/opencontextually/issues"
+Changelog = "https://github.com/gammalex-ai/opencontextually/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

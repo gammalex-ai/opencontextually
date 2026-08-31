@@ -1,0 +1,87 @@
+name: Context failure
+description: An agent did the wrong thing because it was working from the wrong context.
+labels: ["context-failure"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is the most valuable report you can file here.**
+
+        It does not have to involve OpenContextually. If any coding agent
+        went wrong because it read the wrong files, missed a config
+        contract, or never saw the test that defined the behaviour, that
+        case is what this project exists to fix.
+
+        No reproduction? File it anyway with whatever you have.
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: What was the agent asked to do — as you actually phrased it, not cleaned up afterwards.
+      placeholder: "fix the authentication redirect handling"
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Agent / harness
+      description: Which agent, editor, or harness was running. Version if you have it.
+      placeholder: "Claude Code, Cursor, Copilot, an in-house harness, ..."
+    validations:
+      required: true
+  - type: textarea
+    id: should-have-known
+    attributes:
+      label: What should the agent have known?
+      description: The files, contracts, conventions or constraints it needed before touching anything.
+    validations:
+      required: true
+  - type: textarea
+    id: actually-used
+    attributes:
+      label: What did it actually use?
+      description: The context it worked from, as far as you can tell. Paste a file list if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: what-went-wrong
+    attributes:
+      label: What went wrong?
+      description: The behaviour, not just the diff — wrong file edited, duplicated an existing helper, broke a contract it never read, ...
+    validations:
+      required: true
+  - type: textarea
+    id: preventing-context
+    attributes:
+      label: What context would have prevented the failure?
+      description: If you could have handed it three files first, which three?
+    validations:
+      required: true
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Can this be reproduced publicly?
+      description: A public repository turns this into a permanent regression case. A private one is still worth reporting.
+      options:
+        - "Yes — public repository, I can share the task and commit"
+        - "Partly — I can describe it but not share the code"
+        - "No — private code, describing the shape only"
+    validations:
+      required: true
+  - type: input
+    id: repo
+    attributes:
+      label: Repository and commit
+      description: If public — a link and the commit you saw this on.
+    validations:
+      required: false
+  - type: textarea
+    id: gctx-output
+    attributes:
+      label: What gctx returns for the same task (optional)
+      description: |
+        If you have it installed, run `gctx "<the task>"` in that repository
+        and paste the output. Useful either way — if it picks the right
+        files, that is a case we can lock in; if it does not, that is a bug.
+    validations:
+      required: false
