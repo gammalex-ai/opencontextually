@@ -8,6 +8,7 @@ out to an LLM or network.
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .checks import find_configuration_discrepancies, find_test_reference_gaps
@@ -16,7 +17,13 @@ from .discovery import discover
 from .filecache import RunCache
 from .selector import attach_excerpts, compute_filename_word_counts, detect_weak_signal, select
 
-__version__ = "0.2.0"
+try:
+    __version__ = version("opencontextually")
+except PackageNotFoundError:
+    # Running from an uninstalled source checkout (e.g. `python -m` against
+    # a plain git clone with no editable install) -- there's no package
+    # metadata to read, so there's no real version to report.
+    __version__ = "0.0.0.dev0"
 
 __all__ = ["get_context", "ContextPackage", "__version__"]
 
