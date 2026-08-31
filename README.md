@@ -46,8 +46,8 @@ gctx "dependency override not applied in nested routers"
 ```
 
 Run from a clone of [fastapi/fastapi](https://github.com/fastapi/fastapi) at
-[`49033471`](https://github.com/fastapi/fastapi/commit/49033471594e) — 3,139
-files, no fixture — this is the real, unedited output:
+[`49033471`](https://github.com/fastapi/fastapi/commit/49033471594e) — this
+is the real, unedited output:
 
 ```
 dependency override not applied in nested routers
@@ -72,88 +72,40 @@ Excluded: 3121 files
 Checks run: configuration_discrepancy, test_reference_gap
 ```
 
-Three things happened beyond ranking:
+Two files were reached through imports, not text — `--all` marks
+`fastapi/openapi/utils.py` and `fastapi/exceptions.py` `← via routing.py`,
+the file that actually implements dependency overrides. One doc page shows
+up three times, correctly: `testing-dependencies.md` is genuinely
+translated under `docs/en`, `docs/hi`, and `docs/tr`. Every file carries a
+reason, and everything excluded is accounted for — including the 205 that
+scored relevant but missed the result budget.
 
-- **Two of the ten hidden matches were reached through imports, not
-  text.** `--all` shows `fastapi/openapi/utils.py` and
-  `fastapi/exceptions.py`, each marked `← via routing.py` — pulled in
-  because `routing.py`, the file that actually implements dependency
-  overrides, imports one and is imported by the other.
-- **A translated page was included three times over, correctly.**
-  `testing-dependencies.md` exists separately under `docs/en`, `docs/hi`,
-  and `docs/tr`; each copy documents the same behaviour in its own
-  language, so each is included on its own merits.
-- **Every file carries a reason, and everything excluded is accounted
-  for** — including the 205 files that scored as relevant but didn't fit
-  the result budget.
-
-## Try it on something real
-
-OpenContextually runs entirely on your machine. Point it at any local
-repository and give it a task.
-
-### FastAPI
+### Try it yourself
 
 ```bash
-git clone https://github.com/fastapi/fastapi.git
-cd fastapi
-
-python -m venv .venv
-source .venv/bin/activate
-
+git clone https://github.com/fastapi/fastapi.git && cd fastapi
+python -m venv .venv && source .venv/bin/activate   # fish: activate.fish
 pip install opencontextually
 
-gctx "dependency override not applied in nested routers"
+gctx "dependency override not applied in nested routers"   # ~2s
 ```
 
-> Using fish? Activate with `source .venv/bin/activate.fish`.
+Flask clones the same way — `gctx "session cookie is not set on redirect"`
+— in about 0.2s. No model, no API key, no network call; your code never
+leaves your machine. Add `-v` to see the excerpt behind each match.
 
-On the pinned FastAPI benchmark, OpenContextually scans thousands of files
-and returns a small, ranked context package in about **2 seconds**.
-
-Want to see why each file was selected?
-
-```bash
-gctx "dependency override not applied in nested routers" -v
-```
-
-### Flask
-
-```bash
-git clone https://github.com/pallets/flask.git
-cd flask
-
-python -m venv .venv
-source .venv/bin/activate
-
-pip install opencontextually
-
-gctx "session cookie is not set on redirect"
-```
-
-On the pinned Flask benchmark, that run completes in about **0.2 seconds**.
-
-No model. No API key. No network call. Your repository stays local.
-
-### Or use your own repo
-
-Already have a project open? Just run:
+Already have a project open? Skip the clone:
 
 ```bash
 gctx "where does authentication actually happen?"
 gctx "what will break if I change the User model?"
-gctx "how is rate limiting configured and tested?"
-gctx "why is this migration failing?"
-gctx "what should I read before changing the API response schema?"
 ```
 
-Don't invent a demo task. Give it something you're actually working on.
+Give it something you're actually working on — you'll know in seconds
+whether it's right, because it's your code.
 
-You'll know pretty quickly whether it found the right context, because
-it's your code.
-
-**Got a bad result?** That's useful too.
-[Bring us the context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml).
+**Bad result?** [Bring us the context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
+— that's useful too.
 
 ## Search finds matches. Context needs relationships.
 
@@ -179,19 +131,15 @@ OpenContextually
                      bounded context package
 ```
 
-A task like `fix the authentication bug` can require a file that never
+A task like `fix the authentication bug` can need a file that never
 contains the words *authentication* or *bug*. OpenContextually starts from
-direct relevance, follows Python's own import graph, applies repository
-boundaries, runs two narrow deterministic checks, and explains every
-inclusion.
+direct matches, follows Python's own import graph, applies repository
+boundaries, runs two deterministic checks, and explains every inclusion.
 
-Be honest about the split: relationship-following is the part search cannot
-do at all, but most of the value on a typical run is ranking and
-compression of files search *could* have found. Asking sqlfluff about
-*"indentation rule fires on a templated line"*, a case-insensitive grep for
-any of the task's words matches **415 files**; OpenContextually returns
-**12**, each with a reason. Both numbers are reproducible from the corpus
-below.
+Most of the value, though, is ranking and compression of files search could
+already find: a grep for sqlfluff's *"indentation rule fires on a templated
+line"* matches **415 files**; OpenContextually returns **12**, each with a
+reason — reproducible from the corpus below.
 
 ## Install
 
@@ -272,57 +220,40 @@ leaked secrets).
 
 ### What it selected, and what it missed
 
-Fourteen repositories, each with a hand-checked answer key: the files that
-actually implement or test the behaviour the task names, read out of the
-project at its pinned commit. The keys are committed in
-[`benchmarks/answer-keys.json`](benchmarks/answer-keys.json).
-
-Six were used while tuning ranking, so their results are fitted to an
-unknown degree. Eight were held out — their keys were written and
-committed **before** the tool was run against them, and nothing was tuned
-afterwards.
+Fourteen repositories, each with a hand-checked answer key
+([`benchmarks/answer-keys.json`](benchmarks/answer-keys.json)): the files
+that actually implement or test the behaviour the task names. Six were used
+while tuning ranking. Eight were held out — keys written and committed
+**before** the tool ran against them, nothing tuned afterward.
 
 | Group | Repositories | Key files found | In the default view |
 | --- | --- | ---: | ---: |
 | Tuned | httpx, requests, flask, click, sqlfluff, django | 18/19 (95%) | 16/19 (84%) |
-| Held out | black, rich, pydantic, fastapi | 12/16 | 9/16 |
-| Held out | attrs, urllib3, pytest, scrapy | 11/13 | 10/13 |
-| **Held out, combined** | | **23/29 (79%)** | **19/29 (66%)** |
+| Held out | black, rich, pydantic, fastapi, attrs, urllib3, pytest, scrapy | 23/29 (79%) | 19/29 (66%) |
 | **All fourteen** | | **41/48 (85%)** | **35/48 (73%)** |
 
-The two groups disagree by about 16 points, and the held-out figure is the
-one that predicts what happens on a repository this project has never
-seen. **79% and 66%** are the numbers to argue with.
+**79% and 66%** — the held-out figures — are the ones to argue with: they
+predict a repository this project has never seen, and the default view
+(compact output shows eight files) matters more than the total.
 
-The default view matters more than the total: the compact output shows
-eight files, so a key file recovered at rank 15 was found but not
-delivered.
+Across all fourteen: **zero** fixture, vendor, generated or CI files
+selected, and **0.05%–2.1%** of repository bytes delivered.
 
-What holds everywhere: **zero** fixture, vendor, generated or CI files
-selected, **every** path inside the configured root, and **0.05%–2.1%** of
-repository bytes delivered. sqlfluff's 5,249 test fixtures and django's 736
-documentation files are excluded in full.
-
-The held-out repositories found what the tuned six could not, which is the
-entire reason for holding them out:
+What the held-out repos caught that tuning missed:
 
 - **A bundled previous major version.** pydantic ships Pydantic 1 inside
-  Pydantic 2. Six of eighteen slots went to `pydantic/v1/*` while `main.py`
-  was missed. Fixed — a `v1/` directory inside a v2 package is now damped.
-- **A repository holding several copies of one document.** rich spends five
-  slots on README translations; fastapi repeats one page across `docs/en`,
-  `docs/hi` and `docs/tr`; pytest has 50 release announcements. **Not
-  fixed.** A family cap was written, measured, and reverted for collapsing
-  genuinely different pages that share a filename.
-- **Vocabulary collisions**, as on django: rich ranks `progress.py`
-  (`ProgressColumn`) first for a table-width task, and scrapy misses its
-  own `test_dupefilters.py`. Tracked as
+  Pydantic 2 — six of eighteen slots went to `pydantic/v1/*`. **Fixed.**
+- **Repeated documents.** rich's README translations, fastapi's
+  `docs/en`/`docs/hi`/`docs/tr` — genuinely different pages sharing a
+  filename. **Not fixed** — a dedup cap was tried and reverted.
+- **Vocabulary collisions.** On django, rich ranks `progress.py`
+  (`ProgressColumn`) first for a table-width task. Tracked as
   [issue #3](https://github.com/gammalex-ai/opencontextually/issues/3).
 
 ### The corpus
 
-The table below is a 10-repository subset of the 14-repository answer-key
-evaluation above, timed and reproducible with `benchmarks/dogfood.py`:
+A 10-repository, timed subset of the fourteen above, reproducible with
+`benchmarks/dogfood.py`:
 
 | Repository | Commit | Files | Time | Task |
 | --- | --- | ---: | ---: | --- |
@@ -337,32 +268,13 @@ evaluation above, timed and reproducible with `benchmarks/dogfood.py`:
 | [sqlfluff/sqlfluff](https://github.com/sqlfluff/sqlfluff) | [`642e2e4a`](https://github.com/sqlfluff/sqlfluff/commit/642e2e4a34a8) | 5,955 | 2.18s | indentation rule fires on a templated line |
 | [django/django](https://github.com/django/django) | [`73cc09f1`](https://github.com/django/django/commit/73cc09f14f13) | 7,085 | 7.52s | queryset filter drops the second condition |
 
-All ten are MIT- or BSD-licensed public projects, unaffiliated with this
-one, chosen for a spread of size and layout rather than for flattering
-results. Each was cloned with `--depth 1` on 2026-08-30 at the commit
-above; file counts and timings are specific to those commits.
-
-18,693 files in total. **Zero secret-shaped strings** reached any package,
-and every result was **byte-identical across repeat runs**. Times are
-best-of-three on an M-series Mac running Python 3.13 with a warm page
-cache; treat them as orders of magnitude, not a benchmark.
-
-A caveat on the file counts, because the honest number is smaller than the
-flattering one: these are *all* files in a clone. What actually gets read
-is what survives your ignore rules, and on a repository with heavy build
-output that is a small fraction. A 42,000-file checkout completing in two
-seconds sounds impressive and mostly means 41,000 files were gitignored and
-never opened. Of the 18,693 files above, 16,331 are actually scanned;
-django's real figure is 5,580 files in 7.5 seconds.
-
-Speed is listed last on purpose. It is a property worth keeping, not the
-claim — a tool that walks a repository quickly and hands an agent the wrong
-eight files has not helped anyone.
-
-For `gctx "option prompt does not hide the input"` against click, the top
-three are `core.py` (*defines Option*), `decorators.py` (*defines option*),
-and `termui.py` (*defines `_mask_hidden_input`*) — the third being a private
-helper whose name no part of the task literally matches.
+All ten are MIT- or BSD-licensed, unaffiliated with this project, cloned
+`--depth 1` on 2026-08-30 at the commits above. 18,693 files total, but
+only 16,331 are actually scanned — the rest excluded before reading, mostly
+gitignored build output. **Zero secret-shaped strings** reached any
+package; every run was **byte-identical** across repeats. Times are
+best-of-three on an M-series Mac, Python 3.13, warm cache — treat as orders
+of magnitude, not a benchmark.
 
 ## Ecosystem & Community
 
@@ -380,55 +292,39 @@ here is aspirational.
 
 ### Community integrations
 
-Nothing here yet — this project is new and we would rather show an empty
-table than a fictional one. The `--json` output and the MCP server are both
-stable, documented interfaces, so anything below is buildable today by
-anyone:
+Nothing here yet — an empty table beats a fictional one. `--json` and the
+MCP server are both stable, so anything below is buildable today:
 
-- an editor or IDE extension that runs `gctx` on the current task
-- a wrapper for an agent harness — Cursor, Continue, OpenCode, Aider, or
-  your own
-- a GitHub Action that posts the context package for an issue onto its PR
-- a shell or `tmux` integration, a TUI, an alternative renderer
-- language support beyond Python's import graph (see
-  [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md))
+- an editor/IDE extension, or a wrapper for an agent harness (Cursor,
+  Continue, OpenCode, Aider, your own)
+- a GitHub Action posting the context package onto an issue's PR
+- language support beyond Python's import graph — see
+  [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md)
 
-**Built something with `gctx`?** [Open an issue or a PR](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
-and we may feature it here. Community projects are not maintained by us,
-and we will say so next to each one.
+**Built something with `gctx`?** [Tell us](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
+and we may feature it here.
 
 ### The question this project is trying to answer
 
-> **What should an agent know before it acts, and how do we prove it got
+> **What should an agent know before it acts — and how do we prove it got
 > the right context?**
 
-The second half is the hard half, and it is why
-[ContextBench](benchmarks/README.md) exists: every claim in the section
-above is checkable against committed answer keys, and the honest number —
-the held-out one — is the one quoted.
-
-Come argue with the numbers, bring a case where the wrong files were
-selected, or add a benchmark case from a repository we have never seen:
-[COMMUNITY.md](COMMUNITY.md) is the map of every way in.
+Every claim above is checkable against committed answer keys in
+[ContextBench](benchmarks/README.md). Found a wrong-files case, or want to
+argue with a number? [COMMUNITY.md](COMMUNITY.md) has every way in.
 
 ## What it deliberately does not do
 
 - **Follow imports outside Python.** Expansion uses the stdlib `ast`
   module; other languages get lexical matching only.
 - **Understand your code.** Ranking is lexical scoring plus import
-  expansion. It is weakest when your task's words are also the repo's
-  naming convention — asking about "the context agent" where many files are
-  named `*context*` — because filename matches then dominate.
-- **Find problems for you.** The two checks are narrow, named rules that
-  expect to stay quiet: they flag *detectable* gaps and conflicts —
-  a config value contradicting a documented one, a config key or symbol no
-  test references — not arbitrary missing context. Across the six
-  answer-key corpus tasks they produced **zero** findings, which is the
-  honest scope: they fire on the patterns they name, and `examples/` is
-  where you can watch them do it. Across eleven real repositories, one
-  produced a false positive (since fixed) — the honest measure of how much
-  "high precision" has actually been tested. Silence is the normal outcome;
-  a footer always names which checks ran.
+  expansion — weakest when a task's words are also the repo's naming
+  convention, since filename matches then dominate.
+- **Find problems for you.** Two narrow checks flag *detectable* conflicts
+  — a config value contradicting docs, a symbol no test references — not
+  arbitrary missing context. Quiet by default: zero findings across the
+  six answer-key corpus tasks, one false positive (since fixed) across
+  eleven real repos. A footer always names which checks ran.
 - **Guarantee secrets stay out of excerpts.** Redaction masks
   secret-shaped keys and high-entropy strings, but it is best-effort
   pattern matching, not a secrets scanner. See [SECURITY.md](SECURITY.md).
