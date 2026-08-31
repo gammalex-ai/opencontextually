@@ -16,7 +16,7 @@ from .discovery import discover
 from .filecache import RunCache
 from .selector import attach_excerpts, compute_filename_word_counts, detect_weak_signal, select
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.1"
 
 __all__ = ["get_context", "ContextPackage", "__version__"]
 
