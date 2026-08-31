@@ -172,12 +172,19 @@ leaked secrets).
 
 ### What it selected, and what it missed
 
-Six of those repositories have a hand-checked answer key: the files that
-actually implement or test the behaviour each task names, read out of the
-project at its pinned commit. That makes selection quality measurable
-rather than assertable.
+Ten corpus repositories, each with a hand-checked answer key: the files
+that actually implement or test the behaviour the task names, read out of
+the project at its pinned commit. The keys are committed in
+[`benchmarks/answer-keys.json`](benchmarks/answer-keys.json).
 
-| Repository | Files | Selected | Answer-key files found | In the default view |
+Six of them were used while tuning ranking, so their results are fitted to
+an unknown degree. Four — black, rich, pydantic, fastapi — were held out:
+their keys were written and committed **before** the tool was ever run
+against them on these tasks, and nothing was tuned afterwards. Both
+numbers are below, because only one of them predicts what happens on
+*your* repository.
+
+| Repository | Files | Selected | Key files found | In the default view |
 | --- | ---: | ---: | ---: | ---: |
 | httpx | 125 | 17 | 4/4 | 4/4 |
 | requests | 128 | 16 | 4/4 | 4/4 |
@@ -185,25 +192,45 @@ rather than assertable.
 | click | 166 | 18 | 3/3 | 2/3 |
 | sqlfluff | 5,955 | 18 | 2/2 | 1/2 |
 | django | 7,085 | 18 | 2/3 | 2/3 |
-| **Total** | | | **18/19** | **16/19** |
+| **Tuned subtotal** | | | **18/19** | **16/19** |
+| black | 482 | 18 | 4/4 | 2/4 |
+| rich | 553 | 18 | 2/4 | 2/4 |
+| pydantic | 824 | 18 | 2/4 | 2/4 |
+| fastapi | 3,139 | 18 | 3/4 | 3/4 |
+| **Held out** | | | **11/16 (69%)** | **9/16 (56%)** |
+| **All ten** | | | **29/35 (83%)** | **25/35 (71%)** |
 
-The second column is the one that matters to an agent. The compact output
-shows eight files, so a file recovered at rank 17 was found but not
-delivered — recall of the package is not recall of what gets read.
+The gap between the two groups is the honest headline: **tuning on six
+repositories bought about 26 points of apparent recall that does not
+generalize.** Quote 83% and 71%, not 95% and 84%.
 
-Across those six packages: **zero** fixture, vendor, generated or CI files
-selected, **every** path inside the configured root, and **0.08%–1.6%** of
+The default view matters more than the total. The compact output shows
+eight files, so a key file recovered at rank 17 was found but not
+delivered.
+
+What holds across all ten: **zero** fixture, vendor, generated or CI files
+selected, **every** path inside the configured root, and **0.05%–1.6%** of
 repository bytes delivered. sqlfluff's 5,249 test fixtures and django's 736
 documentation files are excluded in full.
 
-The remaining miss is honest and instructive. For *"queryset filter drops
-the second condition"*, django's `contrib/admin/filters.py` — admin UI
-list filters, the wrong subsystem entirely — takes rank 1, because it uses
-the task's vocabulary more densely than the ORM does. `query_utils.py`,
-where `Q` combines the conditions, is not selected at all. Term-rarity
-weighting was tried and measured: it made other repositories worse. This
-is tracked as [issue #6](https://github.com/gammalex-ai/opencontextually/issues/6)
-and pinned by a regression test.
+The held-out run also found three failure modes the tuned six never
+showed, all of them the same shape — a repository containing more than one
+copy of something:
+
+- **A bundled previous major version.** For *"field validator not called on
+  assignment"*, six of pydantic's eighteen slots go to `pydantic/v1/*`, the
+  deprecated bundled copy of Pydantic 1. `main.py`, where assignment
+  validation actually lives, is not selected.
+- **Translated documentation.** rich spends five slots on `README.pt-br.md`,
+  `README.fr.md`, `README.es.md`, `README.id.md` and `README.de.md` — the
+  same document five times. fastapi does the same across `docs/en`,
+  `docs/hi` and `docs/tr`.
+- **Vocabulary collisions**, as on django: rich ranks `progress.py`
+  (`ProgressColumn`) first for a table-width task.
+
+None of these are fixed. They are what the next round of work is for, and
+they were found the only way this kind of thing gets found — by testing
+against repositories that had no say in the tuning.
 
 ### The corpus
 

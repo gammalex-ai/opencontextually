@@ -33,6 +33,15 @@ known-relevant files recovered went from 17/19 to 18/19, and files
 surfaced in the default eight-line view from 12/19 to 16/19, with
 compression unchanged.
 
+Those six were also the repositories the constants were tuned against, so
+four more — black, rich, pydantic, fastapi — were held out: keys written
+and committed before the tool was run against them, nothing tuned
+afterwards. They score **11/16 recovered and 9/16 in the default view**,
+against 18/19 and 16/19 on the tuned six. Across all ten: **29/35 (83%)
+and 25/35 (71%)**. The held-out figures are the ones that predict
+behaviour on an unfamiliar repository, and they are the ones the README
+quotes.
+
 ### Fixed
 
 - **Exclusion counts no longer double-count.** Three separate cap events
@@ -53,6 +62,15 @@ compression unchanged.
   repositories worse. Tracked in
   [#6](https://github.com/gammalex-ai/opencontextually/issues/6) and pinned
   by a regression test.
+- A repository holding more than one copy of something defeats ranking, in
+  three forms found by the held-out run: a bundled previous major version
+  (six of eighteen slots go to `pydantic/v1/*`, while `main.py` is missed),
+  translated documentation counted once per language (five README
+  translations in rich, three doc languages in fastapi), and benchmark or
+  example trees inside the project itself.
+- `test_reference_gap` reports symbols no test *names*. On black — whose
+  formatting tests are data-driven fixture files — that produced five
+  findings that are literally true and probably not actionable.
 
 ## [0.1.1] - 2026-08-30
 
