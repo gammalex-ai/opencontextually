@@ -36,7 +36,26 @@ from .filecache import RunCache
 # the plan's "no relevant context found" being a correct, valuable answer
 # rather than something to avoid.
 SCORE_THRESHOLD = 2.0
-MAX_SEEDS = 12
+
+# --- bug fix: one cap was doing two unrelated jobs ----------------------
+#
+# A single MAX_SEEDS = 12 decided both *how many files are considered* and
+# (with MAX_INCLUDED) how many are delivered. Those are different budgets
+# with different costs. Considering a candidate is cheap -- every
+# discovered file has already been scored by the loop in select() before
+# either cap applies -- while delivering one costs the reader, and the
+# agent, real context.
+#
+# Conflating them dropped genuinely top-ranked files before they could
+# compete: on sqlfluff, `rules/layout/LT02.py` -- the indentation rule the
+# task names -- ranks 16th of 5,451 on its own merits, cleared the
+# threshold, and was cut by the cap at 12, after which expansion spent the
+# freed slots on lower-value neighbours. Nothing about that trade was a
+# context-size decision.
+#
+# So discovery is now generous and delivery stays strict: rank a wide
+# candidate set, then bound what actually ships (MAX_INCLUDED, below).
+DISCOVERY_LIMIT = 60
 
 WEIGHT_FILENAME = 10.0
 WEIGHT_SYMBOL = 6.0
@@ -213,7 +232,7 @@ _GENERATED_SNIFF_CHARS = 4096
 # CSS breakpoint value, 21 times; "navigation" as a homonym import from
 # next/navigation) could out-rank nothing on its own -- content_score is
 # capped at CONTENT_CAP -- but it still cleared SCORE_THRESHOLD and
-# consumed one of MAX_SEEDS/MAX_INCLUDED's limited slots, crowding out nothing
+# consumed one of MAX_INCLUDED's limited slots, crowding out nothing
 # in particular but adding pure noise to the package. Observed on a real
 # TypeScript repo (task "navigation dropdown is broken on mobile", 4 terms):
 # ranks 4-8 of an 8-result package each matched exactly one of the four
@@ -282,13 +301,38 @@ COVERAGE_EXPONENT = 1.0
 # MAX_DEPTH hops, MAX_EXPANDED files total, and per-hop score decay so
 # distant, weakly-connected files do not crowd out direct matches.
 MAX_DEPTH = 2
+
+# --- bug fix: an import edge was treated as inherited relevance ---------
+#
+# Expansion used to score a neighbour at `parent_score * IMPORT_DECAY`,
+# with no reference to the task at all. On a real corpus that inverted the
+# ranking wherever a strong seed had many neighbours: in httpx, every one
+# of `_models.py`'s seven import neighbours inherited 20.8 -- including
+# `_content.py` and `_decoders.py`, which score 0.0 against "redirect
+# loses the authorization header" -- and so outranked `_auth.py`, the file
+# that actually builds the Authorization header, at its own honest 16.6.
+# The same pattern pushed click's `test_termui.py` below `_compat.py`.
+#
+# An import edge answers "should I look at this file?", not "this file is
+# half as relevant as its neighbour". So a reached file now keeps its own
+# task score and gets a small, capped bonus for the relationship:
+#
+#     final = own_task_score + RELATIONSHIP_BONUS * IMPORT_DECAY ** (hop-1)
+#
+# RELATIONSHIP_BONUS sits just above SCORE_THRESHOLD deliberately: a
+# dependency with no lexical connection to the task at all is still worth
+# including when there is room for it (that is how `session.py` reaches
+# the package in examples/auth_bug -- it matches none of the task's
+# words), but it can no longer displace a direct match. IMPORT_DECAY now
+# decays that bonus per hop rather than the parent's relevance.
+RELATIONSHIP_BONUS = 3.0
 IMPORT_DECAY = 0.5
 MAX_EXPANDED = 8
 # Tuned down from an earlier 40 after step-11 evaluation against a real
 # repo (~/Dali): with a permissive cap and SCORE_THRESHOLD = 0.0, a single
 # task pulled in 39 files and an 800+ line rendering -- technically all
 # above-threshold, but well past what a developer will actually read.
-# MAX_SEEDS/MAX_EXPANDED/MAX_INCLUDED together now bound a run to roughly
+# DISCOVERY_LIMIT/MAX_EXPANDED/MAX_INCLUDED together now bound a run to roughly
 # the files worth opening first, not everything that scored above zero.
 MAX_INCLUDED = 18
 
@@ -1076,28 +1120,50 @@ def _build_import_graph(
 
 
 def expand_transitively(
-    seed_items: list[ContextItem], discovered: list[DiscoveredFile], cache: RunCache | None = None
+    seed_items: list[ContextItem],
+    discovered: list[DiscoveredFile],
+    cache: RunCache | None = None,
+    terms: list[str] | None = None,
+    filename_word_counts: dict[str, int] | None = None,
 ) -> tuple[list[ContextItem], int]:
     """Expand `seed_items` across the first-party Python import graph, both
     directions (files a seed imports, and files that import a seed).
 
-    Bounded by MAX_DEPTH hops and MAX_EXPANDED files, with score decayed
-    IMPORT_DECAY per hop. Cycle-safe: a `visited` set (seeds plus anything
-    already expanded) is checked before a file is ever added as a
-    candidate, so a cycle in the import graph simply stops contributing
-    new files rather than looping.
+    Bounded by MAX_DEPTH hops and MAX_EXPANDED files. A reached file is
+    scored on its *own* relevance to `terms` plus a RELATIONSHIP_BONUS
+    decayed IMPORT_DECAY per hop -- never on a share of the seed's score;
+    see the RELATIONSHIP_BONUS block above for why. `terms` is optional
+    only so this stays callable standalone (tests, and any caller with no
+    task in hand); without it every reached file has an own-score of 0.0
+    and is ranked on the relationship bonus alone.
+
+    Cycle-safe: a `visited` set (seeds plus anything already expanded) is
+    checked before a file is ever added as a candidate, so a cycle in the
+    import graph simply stops contributing new files rather than looping.
 
     Returns (expanded ContextItems, count of candidates dropped for being
     over MAX_EXPANDED).
     """
+    cache = cache if cache is not None else RunCache()
     py_files, outbound, inbound = _build_import_graph(discovered, cache)
+
+    def _own_score(path: str) -> float:
+        """This file's own relevance to the task, independent of who
+        imports it. Zero when the caller gave no terms."""
+        if not terms:
+            return 0.0
+        score, _reason, _matched = _analyze(py_files[path], terms, cache, filename_word_counts)
+        return score
 
     seed_paths = {item.path for item in seed_items}
     visited = set(seed_paths)
 
-    # Only .py seeds participate in the import graph.
-    frontier: list[tuple[str, float, list[str]]] = [
-        (item.path, item.score, []) for item in seed_items if item.path in py_files
+    # Only .py seeds participate in the import graph. The frontier carries
+    # the hop number rather than a running score: a neighbour's rank comes
+    # from its own analysis plus the hop-decayed relationship bonus, so
+    # nothing about the parent's score needs to travel along the edge.
+    frontier: list[tuple[str, int, list[str]]] = [
+        (item.path, 0, []) for item in seed_items if item.path in py_files
     ]
 
     expanded: dict[str, tuple[float, list[str], str]] = {}
@@ -1107,21 +1173,30 @@ def expand_transitively(
     while depth <= MAX_DEPTH and frontier:
         candidates: dict[str, tuple[float, list[str], str]] = {}
 
-        for path, score, provenance in frontier:
-            decayed = score * IMPORT_DECAY
+        bonus = RELATIONSHIP_BONUS * (IMPORT_DECAY ** (depth - 1))
+
+        for path, _hop, provenance in frontier:
             friendly = PurePosixPath(path).name
 
             for target in outbound.get(path, ()):
                 if target in visited or target in candidates:
                     continue
                 edge = f"{path} imports {target}"
-                candidates[target] = (decayed, provenance + [edge], f"imported by {friendly}")
+                candidates[target] = (
+                    _own_score(target) + bonus,
+                    provenance + [edge],
+                    f"imported by {friendly}",
+                )
 
             for source in inbound.get(path, ()):
                 if source in visited or source in candidates:
                     continue
                 edge = f"{source} imports {path}"
-                candidates[source] = (decayed, provenance + [edge], f"imports {friendly}")
+                candidates[source] = (
+                    _own_score(source) + bonus,
+                    provenance + [edge],
+                    f"imports {friendly}",
+                )
 
         if not candidates:
             break
@@ -1131,14 +1206,14 @@ def expand_transitively(
         # candidates first rather than arbitrarily.
         ordered = sorted(candidates.items(), key=lambda kv: (-kv[1][0], kv[0]))
 
-        next_frontier: list[tuple[str, float, list[str]]] = []
+        next_frontier: list[tuple[str, int, list[str]]] = []
         for path, (score, provenance, reason) in ordered:
             if len(expanded) >= MAX_EXPANDED:
                 over_cap_count += 1
                 continue
             expanded[path] = (score, provenance, reason)
             visited.add(path)
-            next_frontier.append((path, score, provenance))
+            next_frontier.append((path, depth, provenance))
 
         frontier = next_frontier
         depth += 1
@@ -1801,14 +1876,14 @@ def select(
             term_file_counts[t] = term_file_counts.get(t, 0) + 1
 
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
-    below_count = len(scored) - len(above)
 
     # Stable rank: score descending, tie-break on path ascending for
     # determinism.
     above.sort(key=lambda s: (-s[0], s[1].path))
 
-    kept = above[:MAX_SEEDS]
-    seed_over_cap_count = len(above) - len(kept)
+    # Generous candidate budget -- see DISCOVERY_LIMIT above. What
+    # survives to the package is decided once, by MAX_INCLUDED below.
+    kept = above[:DISCOVERY_LIMIT]
 
     seed_items = [
         ContextItem(
@@ -1821,7 +1896,9 @@ def select(
         for score, discovered_file, reason, matched_terms in kept
     ]
 
-    expanded_items, expansion_over_cap_count = expand_transitively(seed_items, discovered, cache)
+    expanded_items, _expansion_over_cap_count = expand_transitively(
+        seed_items, discovered, cache, terms, filename_word_counts
+    )
 
     # Merge seeds and expanded items into a single ranking -- score
     # descending across both groups, tie-broken on path -- rather than
@@ -1830,11 +1907,28 @@ def select(
     combined.sort(key=lambda item: (-item.score, item.path))
 
     final_items = combined[:MAX_INCLUDED]
-    final_over_cap_count = len(combined) - len(final_items)
 
+    # --- bug fix: exclusion buckets double-counted ----------------------
+    #
+    # These counts used to be summed from three separate cap events (seed
+    # cap, expansion cap, final cap) on top of a below-threshold count
+    # taken over every scored file. The same file could land in two
+    # buckets, so the totals did not reconcile with the repository: httpx
+    # reported "17 relevant · 161 excluded" for 115 scannable files, and
+    # announced 52 files as "relevant files dropped" when most were import
+    # candidates that had never cleared the bar.
+    #
+    # Every scanned file now lands in exactly one of three places --
+    # included, cleared the bar but did not fit, or did not clear the bar
+    # -- so included + excluded == files scanned, and "N relevant files
+    # dropped" means precisely that.
+    included_paths = {item.path for item in final_items}
+    above_paths = {s[1].path for s in above}
     extra_exclusions = {
-        "below_threshold": below_count,
-        "over_cap": seed_over_cap_count + expansion_over_cap_count + final_over_cap_count,
+        "below_threshold": sum(
+            1 for _s, f, _r, _m in scored if f.path not in above_paths and f.path not in included_paths
+        ),
+        "over_cap": sum(1 for path in above_paths if path not in included_paths),
     }
     selection_stats = {
         "terms": terms,

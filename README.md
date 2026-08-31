@@ -32,14 +32,14 @@ config file, docs, and a test — this is the real, unedited output:
 
 ```
 fix the authentication bug
-6 relevant · 21 excluded
+6 relevant · 19 excluded
 
   src/auth/middleware.py  defines AuthenticationError
-  src/users/session.py    imported by middleware.py  ← via middleware.py
-  tests/test_auth.py      imports middleware.py  ← via middleware.py
   README.md               defines authentication requirements
+  tests/test_auth.py      imports middleware.py  ← via middleware.py
   config/auth.yaml        configuration referenced by authentication code
   docs/security.md        defines authentication requirements
+  src/users/session.py    imported by middleware.py  ← via middleware.py
 
   ⚠ session.timeout_minutes: config/auth.yaml:3 declares 60 minutes, but docs/security.md:6 says 30 minutes
   ○ No test references session timeout minutes (config/auth.yaml:3)
@@ -47,8 +47,8 @@ fix the authentication bug
 
   -v for code excerpts
 
-Excluded: 21 files
-  21 files scanned, not relevant enough
+Excluded: 19 files
+  19 files scanned, not relevant enough
 
 Checks run: configuration_discrepancy, test_reference_gap
 ```

@@ -17,7 +17,9 @@ from opencontextually.discovery import discover
 from opencontextually.selector import (
     IMPORT_DECAY,
     MAX_DEPTH,
+    RELATIONSHIP_BONUS,
     expand_transitively,
+    select,
 )
 
 
@@ -204,18 +206,70 @@ def test_seed_file_itself_with_syntax_error_does_not_crash(tmp_path):
     assert items == []
 
 
-# --- score decay per hop --------------------------------------------------
+# --- relationship bonus, not inherited relevance --------------------------
 
 
-def test_score_decays_per_hop(tmp_path):
+def test_relationship_bonus_decays_per_hop_and_ignores_seed_score(tmp_path):
     _write(tmp_path, "a.py", "from b import X\n")
     _write(tmp_path, "b.py", "from c import Y\n")
     _write(tmp_path, "c.py", "Y = 1\n")
 
     discovered = _discovered(tmp_path)
-    seed_score = 10.0
-    items, _over_cap = expand_transitively([_seed("a.py", score=seed_score)], discovered)
+    items, _over_cap = expand_transitively([_seed("a.py", score=10.0)], discovered)
 
     by_path = {item.path: item for item in items}
-    assert by_path["b.py"].score == seed_score * IMPORT_DECAY
-    assert by_path["c.py"].score == seed_score * IMPORT_DECAY * IMPORT_DECAY
+    # No task terms: score is the hop-decayed relationship bonus alone.
+    assert by_path["b.py"].score == RELATIONSHIP_BONUS
+    assert by_path["c.py"].score == RELATIONSHIP_BONUS * IMPORT_DECAY
+
+    # And it is genuinely independent of how strong the seed was -- an
+    # import edge says "look at this", not "this is half as relevant".
+    louder, _over_cap = expand_transitively([_seed("a.py", score=1000.0)], discovered)
+    assert {i.path: i.score for i in louder} == {i.path: i.score for i in items}
+
+
+def test_reached_file_is_scored_on_its_own_task_relevance(tmp_path):
+    # seed.py imports both. `redirect_helper.py` is about the task;
+    # `unrelated.py` only happens to sit on an import edge.
+    _write(tmp_path, "seed.py", "from redirect_helper import a\nfrom unrelated import b\n")
+    _write(tmp_path, "redirect_helper.py", "def build_redirect_headers():\n    return {}\n")
+    _write(tmp_path, "unrelated.py", "def zip_chunks():\n    return []\n")
+
+    discovered = _discovered(tmp_path)
+    terms = ["redirect", "headers"]
+    items, _over_cap = expand_transitively(
+        [_seed("seed.py", score=100.0)], discovered, None, terms
+    )
+
+    by_path = {item.path: item.score for item in items}
+    assert by_path["redirect_helper.py"] > by_path["unrelated.py"]
+    # The unrelated dependency is still reachable -- a relationship is
+    # worth something -- but only the bonus, never a share of the seed.
+    assert by_path["unrelated.py"] == RELATIONSHIP_BONUS
+
+
+def test_import_neighbour_does_not_outrank_a_stronger_direct_match(tmp_path):
+    # The httpx defect in miniature: a seed with several import neighbours
+    # that have nothing to do with the task, and a direct match that
+    # scores lower than the seed. The neighbours must not displace it.
+    _write(
+        tmp_path,
+        "models.py",
+        "from content import a\nfrom decoders import b\nfrom multipart import c\n"
+        "def normalize_authorization_header():\n    return {}\n",
+    )
+    _write(tmp_path, "content.py", "def stream_bytes():\n    return b''\n")
+    _write(tmp_path, "decoders.py", "def gzip_decode():\n    return b''\n")
+    _write(tmp_path, "multipart.py", "def encode_parts():\n    return b''\n")
+    _write(tmp_path, "auth.py", "def build_authorization_header():\n    return {}\n")
+
+    discovered = _discovered(tmp_path)
+    items, _extra, _stats = select(discovered, "request loses the authorization header")
+
+    ranked = [item.path for item in items]
+    assert "auth.py" in ranked
+    for neighbour in ("content.py", "decoders.py", "multipart.py"):
+        if neighbour in ranked:
+            assert ranked.index("auth.py") < ranked.index(neighbour), (
+                f"{neighbour} reached only by an import edge outranked a direct match"
+            )

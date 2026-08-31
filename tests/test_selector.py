@@ -260,21 +260,39 @@ def test_large_data_file_still_demoted_below_source(tmp_path):
     assert source_score > data_score
 
 
-def test_select_caps_at_max_seeds(tmp_path):
-    from opencontextually.selector import MAX_SEEDS
+def test_select_caps_at_max_included(tmp_path):
+    from opencontextually.selector import MAX_INCLUDED
 
-    # Distinct content per file -- this test is about the MAX_SEEDS cap,
+    # Distinct content per file -- this test is about the delivery cap,
     # not duplicate collapsing (see test_bugfixes.py for that), so each
     # file must be byte-distinct or discovery's duplicate collapsing would
     # drop all but one before select() ever sees them.
-    for i in range(MAX_SEEDS + 5):
+    for i in range(MAX_INCLUDED + 5):
         _write(tmp_path / f"auth_{i}.py", f"# auth file {i}\n")
 
     discovered, _reasons = discover(tmp_path)
     items, extra, _stats = select(discovered, "fix the auth bug")
 
-    assert len(items) == MAX_SEEDS
+    # One cap decides what ships: candidate discovery is generous
+    # (DISCOVERY_LIMIT), delivery is strict.
+    assert len(items) == MAX_INCLUDED
     assert extra["over_cap"] == 5
+
+
+def test_exclusion_buckets_account_for_every_scanned_file(tmp_path):
+    # Regression test for double-counted exclusions: included plus every
+    # exclusion bucket must equal the number of files scanned, so a
+    # package can never claim to have excluded more files than exist.
+    for i in range(MAX_INCLUDED_OVERSHOOT := 25):
+        _write(tmp_path / f"auth_{i}.py", f"# auth file {i}\n")
+    for i in range(5):
+        _write(tmp_path / f"unrelated_{i}.py", f"# nothing to do with it {i}\n")
+
+    discovered, _reasons = discover(tmp_path)
+    items, extra, _stats = select(discovered, "fix the auth bug")
+
+    assert len(items) + sum(extra.values()) == len(discovered)
+    assert extra["over_cap"] == MAX_INCLUDED_OVERSHOOT - len(items)
 
 
 def test_select_ignores_syntax_error_python_file(tmp_path):
@@ -301,11 +319,12 @@ def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
         tmp_path / "src" / "users" / "session.py",
         "class SessionStore:\n    pass\n",
     )
-    # A weak seed: content-only match, no filename or symbol hit, so it
-    # scores far below both middleware.py and the decayed session.py.
+    # A weak seed: content-only match, no filename or symbol hit and no
+    # role bonus, so it scores below both middleware.py and the
+    # relationship-reached session.py.
     _write(
-        tmp_path / "docs" / "notes.md",
-        "authentication is mentioned here exactly once.\n",
+        tmp_path / "src" / "misc" / "banner.py",
+        "# authentication is mentioned here, and authentication again\nBANNER = 1\n",
     )
 
     discovered, _reasons = discover(tmp_path)
@@ -316,12 +335,12 @@ def test_included_is_ranked_by_score_across_seeds_and_expanded_items(tmp_path):
 
     paths_in_order = [item.path for item in items]
     assert "src/users/session.py" in paths_in_order
-    assert "docs/notes.md" in paths_in_order
+    assert "src/misc/banner.py" in paths_in_order
     # session.py (import-reached from a strong seed) must outrank the
     # weak content-only seed, even though it was appended after seeds by
     # the old (buggy) code.
     assert paths_in_order.index("src/users/session.py") < paths_in_order.index(
-        "docs/notes.md"
+        "src/misc/banner.py"
     )
 
 
