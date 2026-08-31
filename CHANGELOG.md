@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Warnings raised while parsing a scanned file no longer reach the terminal.
+  `ast.parse` emits `SyntaxWarning` for constructs like an invalid escape
+  sequence, and reported them as `<unknown>:108` — a line number with no
+  filename, useless and alarming in equal measure. Running against psf/black
+  produced 24 lines of stderr against 22 lines of output. This tool reads
+  code, it does not lint it.
 - **Discovery no longer crashes on an ignore pattern `pathspec` rejects.** A
   `.gitignore` containing a bare `!` line — which `git status` reads without
   complaint — raised `GitIgnorePatternError` out of `discover()`, so

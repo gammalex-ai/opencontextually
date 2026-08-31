@@ -1,20 +1,28 @@
 {
   "_comment": [
-    "Copy to corpus.local.json (gitignored) and point `root` at clones on your own disk.",
-    "Paths are never committed: a corpus is personal to whoever runs it, and some",
-    "useful repositories are private.",
+    "Copy to corpus.local.json (gitignored) and point `root` at clones on your own",
+    "disk. Paths are never committed: a corpus is personal to whoever runs it, and",
+    "some useful repositories are private.",
     "",
-    "These ten are the public corpus quoted in the README. Clone them with",
-    "  git clone --depth 1 https://github.com/<slug>.git",
+    "These ten public projects are the corpus quoted in the README. They are",
+    "unaffiliated with this one and were chosen for a spread of size and layout,",
+    "not for flattering results. Recreate them with:",
+    "",
+    "    ./fetch-corpus.sh ~/src",
+    "",
+    "`commit` is what the README's figures were measured against; file counts and",
+    "timings drift as these projects change.",
     "",
     "Tasks are phrased as a developer would describe the symptom. Keep at least one",
     "whose words collide with the repo's own naming convention -- that is the known",
     "weak case (see README, 'What it deliberately does not do')."
   ],
+  "measured_on": "2026-08-30",
   "repos": [
     {
       "root": "~/src/httpx",
       "github": "encode/httpx",
+      "commit": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
       "tasks": [
         "redirect loses the authorization header"
       ]
@@ -22,6 +30,7 @@
     {
       "root": "~/src/requests",
       "github": "psf/requests",
+      "commit": "5460f467b02e49471c0fd6cfc9ca0adab6351f98",
       "tasks": [
         "session cookie persists across redirects"
       ]
@@ -29,6 +38,7 @@
     {
       "root": "~/src/click",
       "github": "pallets/click",
+      "commit": "36baa15ff831b939a22bc527cd76ce653ef6f66d",
       "tasks": [
         "option prompt does not hide the input"
       ]
@@ -36,6 +46,7 @@
     {
       "root": "~/src/flask",
       "github": "pallets/flask",
+      "commit": "d318b683471101618febed18996405ad26462110",
       "tasks": [
         "session cookie is not set on redirect"
       ]
@@ -43,6 +54,7 @@
     {
       "root": "~/src/black",
       "github": "psf/black",
+      "commit": "8947c48ef2077c3a301b03c1e814dc2e3f78436e",
       "tasks": [
         "string normalization changes the wrong quotes"
       ]
@@ -50,6 +62,7 @@
     {
       "root": "~/src/rich",
       "github": "Textualize/rich",
+      "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
       "tasks": [
         "table column width ignores the terminal size"
       ]
@@ -57,6 +70,7 @@
     {
       "root": "~/src/pydantic",
       "github": "pydantic/pydantic",
+      "commit": "f512b087202f58ec90a9d38c9102858567d72440",
       "tasks": [
         "field validator not called on assignment"
       ]
@@ -64,6 +78,7 @@
     {
       "root": "~/src/fastapi",
       "github": "fastapi/fastapi",
+      "commit": "49033471594ea5d99a80abdf1043231b7791ee49",
       "tasks": [
         "dependency override not applied in nested routers"
       ]
@@ -71,6 +86,7 @@
     {
       "root": "~/src/sqlfluff",
       "github": "sqlfluff/sqlfluff",
+      "commit": "642e2e4a34a8e8afd36a45debe8bd3ffcf106c37",
       "tasks": [
         "indentation rule fires on a templated line"
       ]
@@ -78,6 +94,7 @@
     {
       "root": "~/src/django",
       "github": "django/django",
+      "commit": "73cc09f14f13fedddc14d6ba5b287cb33c24e4a4",
       "tasks": [
         "queryset filter drops the second condition"
       ]

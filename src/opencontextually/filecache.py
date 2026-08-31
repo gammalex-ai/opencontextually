@@ -35,6 +35,7 @@ builds one RunCache per call and threads it through explicitly.
 from __future__ import annotations
 
 import ast
+import warnings
 from dataclasses import dataclass, field
 
 _DEF_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -111,7 +112,22 @@ class RunCache:
             return rec
 
         try:
-            tree = ast.parse(content)
+            # Warnings raised while parsing *someone else's* file are not this
+            # user's problem and must never reach their terminal. ast.parse
+            # emits SyntaxWarning for things like an invalid escape sequence,
+            # and because the source is a string rather than a file on disk,
+            # Python reports the location as "<unknown>:108" -- a line number
+            # with no filename, which is simultaneously useless and alarming.
+            # Observed on psf/black, whose deliberately-malformed test
+            # fixtures produced 24 lines of stderr for 22 lines of output.
+            #
+            # This tool reads code; it does not compile or lint it. A file
+            # that warns still parses, and its AST is still exactly what the
+            # selector wants. Suppression is scoped to this one call, so
+            # warnings raised anywhere else in the process are unaffected.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tree = ast.parse(content)
         except (SyntaxError, ValueError):
             # ValueError alongside SyntaxError: some call sites this
             # centralizes (selector._imports_of / _imported_names_of) parse

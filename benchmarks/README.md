@@ -15,10 +15,17 @@ argued about.
 ## Use
 
 ```
+./benchmarks/fetch-corpus.sh ~/src
 cp benchmarks/corpus.example.json benchmarks/corpus.local.json
 $EDITOR benchmarks/corpus.local.json          # already gitignored
 python benchmarks/dogfood.py benchmarks/corpus.local.json
 ```
+
+`fetch-corpus.sh` clones the ten public repositories the README's figures
+were measured against, each pinned to the exact commit they were measured
+at. Pinning is what makes those figures checkable: file counts and timings
+drift as the projects change. The ten are unaffiliated public projects,
+chosen for a spread of size and layout rather than for flattering results.
 
 Repository paths are never committed — a corpus is personal to whoever runs
 it, and some useful repositories are private.

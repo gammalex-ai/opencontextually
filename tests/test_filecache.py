@@ -51,3 +51,34 @@ def test_each_python_file_is_parsed_at_most_once_per_run():
     # test-reference stems, and excerpt extraction all need parsed facts
     # from overlapping sets of files.
     assert mocked.call_count <= expected_parseable
+
+
+# --- bug fix: warnings from scanned files reached the user's terminal -----
+#
+# ast.parse emits SyntaxWarning for constructs like an invalid escape
+# sequence. Because RunCache parses a string rather than a file, Python
+# reports the location as "<unknown>:108" -- a line number with no filename,
+# which tells the user nothing and looks like the tool is broken. Observed
+# on psf/black, whose deliberately-malformed test fixtures produced 24 lines
+# of stderr against 22 lines of actual output.
+
+
+def test_parsing_a_file_that_warns_emits_no_warning(tmp_path):
+    import warnings
+
+    from opencontextually.discovery import DiscoveredFile
+    from opencontextually.filecache import RunCache
+
+    # An invalid escape sequence: parses fine, warns loudly.
+    path = tmp_path / "warns.py"
+    path.write_text('def f():\n    return "\\ "\n')
+    discovered_file = DiscoveredFile(
+        path="warns.py", abs_path=path, role="source", size=path.stat().st_size
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        record = RunCache().get_record(discovered_file)
+
+    assert record.parse_ok, "the file still parses -- suppression must not skip it"
+    assert [w for w in caught if issubclass(w.category, SyntaxWarning)] == []

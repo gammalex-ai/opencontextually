@@ -173,18 +173,23 @@ leaked secrets).
 Ten public Python projects, each with a plausible task, all reproducible
 with `benchmarks/dogfood.py`:
 
-| Repository | Files | Time | Task |
-| --- | ---: | ---: | --- |
-| [httpx](https://github.com/encode/httpx) | 125 | 0.15s | redirect loses the authorization header |
-| [requests](https://github.com/psf/requests) | 128 | 0.11s | session cookie persists across redirects |
-| [click](https://github.com/pallets/click) | 166 | 0.22s | option prompt does not hide the input |
-| [flask](https://github.com/pallets/flask) | 236 | 0.17s | session cookie is not set on redirect |
-| [black](https://github.com/psf/black) | 482 | 0.39s | string normalization changes the wrong quotes |
-| [rich](https://github.com/Textualize/rich) | 553 | 0.49s | table column width ignores the terminal size |
-| [pydantic](https://github.com/pydantic/pydantic) | 824 | 1.47s | field validator not called on assignment |
-| [fastapi](https://github.com/fastapi/fastapi) | 3,139 | 1.75s | dependency override not applied in nested routers |
-| [sqlfluff](https://github.com/sqlfluff/sqlfluff) | 5,955 | 1.64s | indentation rule fires on a templated line |
-| [django](https://github.com/django/django) | 7,085 | 6.38s | queryset filter drops the second condition |
+| Repository | Commit | Files | Time | Task |
+| --- | --- | ---: | ---: | --- |
+| [encode/httpx](https://github.com/encode/httpx) | [`b5addb64`](https://github.com/encode/httpx/commit/b5addb64f016) | 125 | 0.15s | redirect loses the authorization header |
+| [psf/requests](https://github.com/psf/requests) | [`5460f467`](https://github.com/psf/requests/commit/5460f467b02e) | 128 | 0.11s | session cookie persists across redirects |
+| [pallets/click](https://github.com/pallets/click) | [`36baa15f`](https://github.com/pallets/click/commit/36baa15ff831) | 166 | 0.22s | option prompt does not hide the input |
+| [pallets/flask](https://github.com/pallets/flask) | [`d318b683`](https://github.com/pallets/flask/commit/d318b6834711) | 236 | 0.17s | session cookie is not set on redirect |
+| [psf/black](https://github.com/psf/black) | [`8947c48e`](https://github.com/psf/black/commit/8947c48ef207) | 482 | 0.39s | string normalization changes the wrong quotes |
+| [Textualize/rich](https://github.com/Textualize/rich) | [`9d8f9a37`](https://github.com/Textualize/rich/commit/9d8f9a372cc5) | 553 | 0.49s | table column width ignores the terminal size |
+| [pydantic/pydantic](https://github.com/pydantic/pydantic) | [`f512b087`](https://github.com/pydantic/pydantic/commit/f512b087202f) | 824 | 1.47s | field validator not called on assignment |
+| [fastapi/fastapi](https://github.com/fastapi/fastapi) | [`49033471`](https://github.com/fastapi/fastapi/commit/49033471594e) | 3,139 | 1.75s | dependency override not applied in nested routers |
+| [sqlfluff/sqlfluff](https://github.com/sqlfluff/sqlfluff) | [`642e2e4a`](https://github.com/sqlfluff/sqlfluff/commit/642e2e4a34a8) | 5,955 | 1.64s | indentation rule fires on a templated line |
+| [django/django](https://github.com/django/django) | [`73cc09f1`](https://github.com/django/django/commit/73cc09f14f13) | 7,085 | 6.38s | queryset filter drops the second condition |
+
+All ten are MIT- or BSD-licensed public projects, unaffiliated with this
+one, chosen for a spread of size and layout rather than for flattering
+results. Each was cloned with `--depth 1` on 2026-08-30 at the commit
+above; file counts and timings are specific to those commits.
 
 18,693 files in total. **Zero secret-shaped strings** reached any package,
 and every result was **byte-identical across repeat runs**. Times are
