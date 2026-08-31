@@ -66,3 +66,36 @@ def test_related_task_still_finds_the_conflict():
     package = get_context("fix the authentication bug", root=FIXTURE_ROOT)
     assert package.included != []
     assert package.conflicts != []
+
+
+# --- bug fix: the trace claimed checks that never ran ----------------------
+#
+# `trace["rules_run"]` was a hardcoded four-element list, so an empty
+# selection -- which skips `configuration_discrepancy` entirely and bails
+# out of `find_test_reference_gaps` immediately -- still reported
+# "Checks run: configuration_discrepancy, test_reference_gap" in the
+# footer and both rule ids in the JSON. Found by running
+# `octx "zzzqqxx nonexistentterm"` against this fixture. A machine
+# consumer reads `trace` to know what was actually evaluated, so this was
+# not merely cosmetic.
+
+
+def test_empty_selection_does_not_claim_checks_ran():
+    package = get_context(UNRELATED_TASK, root=FIXTURE_ROOT)
+    assert package.included == []
+    assert "configuration_discrepancy" not in package.trace["rules_run"]
+    assert "test_reference_gap" not in package.trace["rules_run"]
+    assert "Checks run: selection only" in package.render()
+
+
+def test_non_empty_selection_still_reports_both_checks():
+    package = get_context("fix the authentication bug", root=FIXTURE_ROOT)
+    assert package.included != []
+    assert "configuration_discrepancy" in package.trace["rules_run"]
+    assert "test_reference_gap" in package.trace["rules_run"]
+
+
+def test_rules_run_always_reports_the_selection_stages():
+    for task in (UNRELATED_TASK, "fix the authentication bug"):
+        rules_run = get_context(task, root=FIXTURE_ROOT).trace["rules_run"]
+        assert rules_run[:2] == ["lexical_selection", "transitive_import_expansion"]

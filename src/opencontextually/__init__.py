@@ -81,40 +81,49 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         selection_stats["total_files"],
     )
 
-    # CHECK: configuration_discrepancy. Lexical, high-precision/low-recall
-    # -- see checks.py. In principle a config/doc value disagreement is a
-    # structural fact about the repo, independent of which task happened
-    # to be asked -- so this scans every discovered config/doc file, not
-    # just the ones SELECT chose. But OpenContextually's contract is
-    # context *for a task*: when SELECT found nothing relevant to `task`
-    # (`items` is empty), a repo-wide finding is not this task's problem
-    # and must not be volunteered underneath a "No relevant context found
-    # for this task" message -- that combination reads as self-
-    # contradictory (see tests/test_no_relevant_context.py). So this rule
-    # only runs once SELECT has actually included something; an empty
-    # selection short-circuits to no conflicts, same as test_reference_gap
-    # already does for its own emptiness case below. Still always recorded
-    # in trace["rules_run"], so the render() footer accurately reports
-    # which checks ran regardless of whether either found something.
-    conflicts = (
-        find_configuration_discrepancies(
+    # --- CHECK ------------------------------------------------------------
+    #
+    # Both rules are lexical, high-precision/low-recall -- see checks.py --
+    # and both are scoped to what SELECT actually chose for this task.
+    # `configuration_discrepancy` would in principle be a repo-wide
+    # structural fact, but OpenContextually's contract is context *for a
+    # task*: volunteering a repo-wide finding underneath a "No relevant
+    # context found for this task" message reads as self-contradictory
+    # (see tests/test_no_relevant_context.py). `test_reference_gap` is
+    # task-scoped by construction -- "no test references X" is only
+    # meaningful relative to what this task pulled in.
+    #
+    # --- bug fix: the trace claimed checks that never ran ----------------
+    # `rules_run` used to be a hardcoded four-element list built at the
+    # bottom of this function, so an empty selection -- which skips
+    # `configuration_discrepancy` entirely via the `if items` guard, and
+    # bails out of `find_test_reference_gaps` at its own first line --
+    # still reported "Checks run: configuration_discrepancy,
+    # test_reference_gap". That is a confident falsehood about the tool's
+    # own behaviour, and exactly the kind a user cannot check. It also
+    # matters beyond cosmetics: `trace` is what a machine consumer reads
+    # to know what was actually evaluated.
+    #
+    # `rules_run` is now accumulated as each rule is genuinely invoked, so
+    # the footer and the JSON both report what really ran. An empty
+    # selection now correctly renders "Checks run: selection only".
+    rules_run = ["lexical_selection", "transitive_import_expansion"]
+    conflicts: list[dict] = []
+    missing: list[dict] = []
+
+    if items:
+        conflicts = find_configuration_discrepancies(
             discovered,
             cache,
             included_paths={item.path for item in items},
             task_terms=selection_stats["terms"],
         )
-        if items
-        else []
-    )
+        rules_run.append("configuration_discrepancy")
 
-    # CHECK: test_reference_gap. Lexical, high-precision/low-recall -- see
-    # checks.py. Runs only over the files SELECT actually chose for this
-    # task (`items`), because "no test references X" is only meaningful
-    # relative to what this task pulled in, not the whole repo. Always
-    # recorded in trace["rules_run"] once it runs, whether or not it
-    # finds anything, so the render() footer accurately reports which
-    # checks ran.
-    missing = find_test_reference_gaps(items, discovered, task, conflicts=conflicts, cache=cache)
+        missing = find_test_reference_gaps(
+            items, discovered, task, conflicts=conflicts, cache=cache
+        )
+        rules_run.append("test_reference_gap")
 
     excluded_by_reason = dict(excluded_by_reason)
     excluded_by_reason.update(extra_exclusions)
@@ -138,12 +147,7 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
         excluded_by_reason=excluded_by_reason,
         weak_signal=weak_signal,
         trace={
-            "rules_run": [
-                "lexical_selection",
-                "transitive_import_expansion",
-                "configuration_discrepancy",
-                "test_reference_gap",
-            ],
+            "rules_run": rules_run,
             "excerpts_dropped_over_budget": excerpts_dropped_over_budget,
         },
     )

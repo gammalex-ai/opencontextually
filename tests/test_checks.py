@@ -873,3 +873,68 @@ def test_cross_file_gate_still_corroborates_a_public_symbol(tmp_path):
     findings = find_test_reference_gaps(items, discovered, "fix the session bug")
 
     assert any("expir" in f["term"] for f in findings), findings
+
+
+# --- bug fix: golden test fixtures read as authoritative configuration -----
+#
+# Found by running this tool against a real 42,000-file repository
+# (the first repo large enough to expose it). A JSON *golden test bundle*
+# under a `demo_fixtures/` directory was parsed as project configuration
+# and contradicted against a *roadmap* document, producing two
+# configuration_discrepancy findings -- both false. The project's stated
+# bar is that any false positive here is a bug, and the README claimed the
+# rule had fired on zero of nine real repos; this was the tenth.
+#
+# Root cause: discovery.DATA_DIR_SEGMENTS contained "fixture"/"fixtures"
+# but not the compound "demo_fixtures", so _classify_role() left the .json
+# at role="config" (because .json is in CONFIG_EXTENSIONS) instead of
+# reclassifying it to "other". Every downstream precision gate then passed
+# honestly: the flattened key had three core tokens, its value was a bare
+# integer, and a roadmap line happened to carry the same three tokens and
+# a different number.
+#
+# The fix judges a path segment by its *words*, so "demo_fixtures",
+# "test-fixtures", and "golden_fixture_data" are all recognized the way a
+# bare "fixtures" already was.
+
+
+def test_golden_fixture_json_is_not_read_as_configuration(tmp_path):
+    """The exact shape observed on the real repo: a JSON fixture under a
+    compound `*_fixtures/` directory vs. a numeric claim in a planning doc.
+    """
+    _write(
+        tmp_path / "verification" / "demo_fixtures" / "golden_bundle.json",
+        '{"citation_verification": {"total": 13}}\n',
+    )
+    _write(
+        tmp_path / "docs" / "planning" / "roadmap.md",
+        "# Roadmap\n\nTarget citation verification total of 34 for the pilot.\n",
+    )
+    discovered = _discover(tmp_path)
+    findings = find_configuration_discrepancies(discovered)
+    assert findings == [], findings
+
+
+def test_compound_fixture_directories_are_not_configuration(tmp_path):
+    for directory in ("demo_fixtures", "test-fixtures", "golden_fixture_data"):
+        _write(
+            tmp_path / directory / "bundle.json",
+            '{"citation_verification": {"total": 13}}\n',
+        )
+    _write(
+        tmp_path / "docs" / "spec.md",
+        "The citation verification total must be 34.\n",
+    )
+    discovered = _discover(tmp_path)
+    assert find_configuration_discrepancies(discovered) == []
+
+
+def test_real_configuration_discrepancy_still_detected(tmp_path):
+    """Guard against over-correcting: a genuine config file outside any
+    fixture directory must still be compared against a doc assertion.
+    """
+    _write(tmp_path / "config" / "auth.json", '{"session": {"timeout_minutes": 60}}\n')
+    _write(tmp_path / "docs" / "security.md", "- Session timeout: 30 minutes.\n")
+    discovered = _discover(tmp_path)
+    findings = find_configuration_discrepancies(discovered)
+    assert findings, "a real config-vs-doc discrepancy must still be reported"
