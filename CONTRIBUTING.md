@@ -65,12 +65,21 @@ tuned against the same cases used to justify it. The corpus separates
 tuned from held-out repositories precisely because that distinction is easy
 to lose.
 
-## CI
+## CI and merging
 
 Every push and pull request runs `pytest` on Python 3.10, 3.11, 3.12, and
 3.13 via GitHub Actions (`.github/workflows/test.yml`), matching the
-`requires-python = ">=3.10"` claim in `pyproject.toml`. A PR is expected
-to pass on all four before merge.
+`requires-python = ">=3.10"` claim in `pyproject.toml`. All four are
+required before a pull request can merge.
+
+`main` is protected: pull requests only, linear history, no force pushes,
+review from a code owner, and open conversations resolved. Branch your work,
+push, open a PR. Branches are deleted automatically on merge, and you can
+bring yours up to date from the PR page rather than rebasing by hand.
+
+The first pull request from a new contributor needs a maintainer to approve
+the CI run before it starts — that is a GitHub-wide protection against
+workflow abuse, not a comment on your patch.
 
 ## Scope discipline
 

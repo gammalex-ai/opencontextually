@@ -1,0 +1,10 @@
+# Review routing. @yenklabs is the sole admin today; replace this with a
+# team (e.g. @gammalex-ai/maintainers) once one exists, since a CODEOWNERS
+# entry naming a team that does not exist silently routes nothing.
+*                       @yenklabs
+
+# Selection behaviour and the evidence behind it. A change here moves the
+# numbers in the README, so it is not merged on reading alone -- see
+# CONTRIBUTING.md ("Changing selection").
+/src/opencontextually/  @yenklabs
+/benchmarks/            @yenklabs

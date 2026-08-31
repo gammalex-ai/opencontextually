@@ -1,0 +1,12 @@
+# Actions only. The package itself has one runtime dependency and pins
+# nothing, so there is nothing for Dependabot to do there -- but a stale
+# action version is a real supply-chain risk on a public repository.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
