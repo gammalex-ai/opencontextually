@@ -172,65 +172,52 @@ leaked secrets).
 
 ### What it selected, and what it missed
 
-Ten corpus repositories, each with a hand-checked answer key: the files
-that actually implement or test the behaviour the task names, read out of
-the project at its pinned commit. The keys are committed in
+Fourteen repositories, each with a hand-checked answer key: the files that
+actually implement or test the behaviour the task names, read out of the
+project at its pinned commit. The keys are committed in
 [`benchmarks/answer-keys.json`](benchmarks/answer-keys.json).
 
-Six of them were used while tuning ranking, so their results are fitted to
-an unknown degree. Four — black, rich, pydantic, fastapi — were held out:
-their keys were written and committed **before** the tool was ever run
-against them on these tasks, and nothing was tuned afterwards. Both
-numbers are below, because only one of them predicts what happens on
-*your* repository.
+Six were used while tuning ranking, so their results are fitted to an
+unknown degree. Eight were held out — their keys were written and
+committed **before** the tool was run against them, and nothing was tuned
+afterwards.
 
-| Repository | Files | Selected | Key files found | In the default view |
-| --- | ---: | ---: | ---: | ---: |
-| httpx | 125 | 17 | 4/4 | 4/4 |
-| requests | 128 | 16 | 4/4 | 4/4 |
-| flask | 236 | 18 | 3/3 | 3/3 |
-| click | 166 | 18 | 3/3 | 2/3 |
-| sqlfluff | 5,955 | 18 | 2/2 | 1/2 |
-| django | 7,085 | 18 | 2/3 | 2/3 |
-| **Tuned subtotal** | | | **18/19** | **16/19** |
-| black | 482 | 18 | 4/4 | 2/4 |
-| rich | 553 | 18 | 2/4 | 2/4 |
-| pydantic | 824 | 18 | 2/4 | 2/4 |
-| fastapi | 3,139 | 18 | 3/4 | 3/4 |
-| **Held out** | | | **11/16 (69%)** | **9/16 (56%)** |
-| **All ten** | | | **29/35 (83%)** | **25/35 (71%)** |
+| Group | Repositories | Key files found | In the default view |
+| --- | --- | ---: | ---: |
+| Tuned | httpx, requests, flask, click, sqlfluff, django | 18/19 (95%) | 16/19 (84%) |
+| Held out | black, rich, pydantic, fastapi | 12/16 | 9/16 |
+| Held out | attrs, urllib3, pytest, scrapy | 11/13 | 10/13 |
+| **Held out, combined** | | **23/29 (79%)** | **19/29 (66%)** |
+| **All fourteen** | | **41/48 (85%)** | **35/48 (73%)** |
 
-The gap between the two groups is the honest headline: **tuning on six
-repositories bought about 26 points of apparent recall that does not
-generalize.** Quote 83% and 71%, not 95% and 84%.
+The two groups disagree by about 16 points, and the held-out figure is the
+one that predicts what happens on a repository this project has never
+seen. **79% and 66%** are the numbers to argue with.
 
-The default view matters more than the total. The compact output shows
-eight files, so a key file recovered at rank 17 was found but not
+The default view matters more than the total: the compact output shows
+eight files, so a key file recovered at rank 15 was found but not
 delivered.
 
-What holds across all ten: **zero** fixture, vendor, generated or CI files
-selected, **every** path inside the configured root, and **0.05%–1.6%** of
+What holds everywhere: **zero** fixture, vendor, generated or CI files
+selected, **every** path inside the configured root, and **0.05%–2.1%** of
 repository bytes delivered. sqlfluff's 5,249 test fixtures and django's 736
 documentation files are excluded in full.
 
-The held-out run also found three failure modes the tuned six never
-showed, all of them the same shape — a repository containing more than one
-copy of something:
+The held-out repositories found what the tuned six could not, which is the
+entire reason for holding them out:
 
-- **A bundled previous major version.** For *"field validator not called on
-  assignment"*, six of pydantic's eighteen slots go to `pydantic/v1/*`, the
-  deprecated bundled copy of Pydantic 1. `main.py`, where assignment
-  validation actually lives, is not selected.
-- **Translated documentation.** rich spends five slots on `README.pt-br.md`,
-  `README.fr.md`, `README.es.md`, `README.id.md` and `README.de.md` — the
-  same document five times. fastapi does the same across `docs/en`,
-  `docs/hi` and `docs/tr`.
+- **A bundled previous major version.** pydantic ships Pydantic 1 inside
+  Pydantic 2. Six of eighteen slots went to `pydantic/v1/*` while `main.py`
+  was missed. Fixed — a `v1/` directory inside a v2 package is now damped.
+- **A repository holding several copies of one document.** rich spends five
+  slots on README translations; fastapi repeats one page across `docs/en`,
+  `docs/hi` and `docs/tr`; pytest has 50 release announcements. **Not
+  fixed.** A family cap was written, measured, and reverted for collapsing
+  genuinely different pages that share a filename.
 - **Vocabulary collisions**, as on django: rich ranks `progress.py`
-  (`ProgressColumn`) first for a table-width task.
-
-None of these are fixed. They are what the next round of work is for, and
-they were found the only way this kind of thing gets found — by testing
-against repositories that had no say in the tuning.
+  (`ProgressColumn`) first for a table-width task, and scrapy misses its
+  own `test_dupefilters.py`. Tracked as
+  [issue #6](https://github.com/gammalex-ai/opencontextually/issues/6).
 
 ### The corpus
 
