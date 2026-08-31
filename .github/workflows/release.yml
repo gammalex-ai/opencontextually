@@ -82,6 +82,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Compute the PyPI version from the tag
+        run: echo "PYPI_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -90,3 +92,7 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          # `body` is pre-pended to the auto-generated notes, not replaced
+          # by them -- see https://github.com/softprops/action-gh-release.
+          body: |
+            📦 [`opencontextually ${{ env.PYPI_VERSION }}` on PyPI](https://pypi.org/project/opencontextually/${{ env.PYPI_VERSION }}/) — `pip install opencontextually`
