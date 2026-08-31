@@ -10,7 +10,7 @@ context layer before the agent.
 
 ```mermaid
 flowchart LR
-    A["Your task<br/><b>fix the authentication bug</b>"] --> B["SELECT<br/>find likely context"]
+    A["Your task<br/>fix the authentication bug"] --> B["SELECT<br/>find likely context"]
     B --> C["FOLLOW<br/>traverse code relationships"]
     C --> D["BOUND<br/>keep what's useful"]
     D --> E["CHECK<br/>surface gaps and conflicts"]
