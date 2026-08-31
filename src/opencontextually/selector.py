@@ -15,7 +15,7 @@ import re
 from pathlib import PurePosixPath
 
 from .context import ContextItem, Excerpt
-from .discovery import CONFIG_EXTENSIONS, DATA_DIR_SEGMENTS, DiscoveredFile
+from .discovery import CONFIG_EXTENSIONS, DiscoveredFile, is_data_dir_segment
 from .filecache import RunCache
 
 # --------------------------------------------------------------------------
@@ -779,8 +779,8 @@ def _in_data_path(path: str) -> bool:
     directory (see discovery.DATA_DIR_SEGMENTS) -- used only to apply
     DATA_PATH_PENALTY, never to exclude the file outright.
     """
-    dir_parts = path.lower().split("/")[:-1]
-    return any(part in DATA_DIR_SEGMENTS for part in dir_parts)
+    dir_parts = path.split("/")[:-1]
+    return any(is_data_dir_segment(part) for part in dir_parts)
 
 
 def _looks_generated(content: str) -> bool:

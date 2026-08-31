@@ -48,7 +48,8 @@ fix the authentication bug
 
   -v for code excerpts
 
-Excluded: 21 unrelated files (below_threshold=21, binary=0, duplicate=0, ignored=0, over_budget=0, over_cap=0, oversize=0)
+Excluded: 21 files
+  21 files scanned, not relevant enough
 
 Checks run: configuration_discrepancy, test_reference_gap
 ```
@@ -150,15 +151,31 @@ not sorted or explained.
   `key: value` scan, not a real YAML/TOML parser) and a doc.
   `test_reference_gap` reports task-relevant terms with no discovered
   test file referencing them — a reference gap, not a coverage claim.
-  Both are intentionally high-precision and low-recall: across nine real
-  repos tested, `configuration_discrepancy` fired on zero of them, and
-  `test_reference_gap` fires rarely. Silence is the expected, common
-  outcome, not a sign the checks aren't running — a footer always names
-  which checks ran.
+  Both are intentionally high-precision and low-recall. Across eleven
+  real repos tested, `configuration_discrepancy` has fired on one — and
+  both of its findings there were **false positives**, caused by a JSON
+  golden test fixture under a `demo_fixtures/` directory being read as
+  project configuration and contradicted against a roadmap document. That
+  specific cause is fixed (compound fixture directory names are now
+  recognized as test data), and the rule fires on zero of the eleven
+  again, but the episode is the honest measure of what "high precision"
+  has actually been tested to mean: one real repo out of eleven was
+  enough to find a false positive. `test_reference_gap` fires rarely.
+  Silence is the expected, common outcome, not a sign the checks aren't
+  running — a footer always names which checks ran.
 - **Ranking is not always right.** It's lexical scoring plus import
   expansion, not code understanding; on some tasks a relevant file will
   rank lower than it should, or an unrelated file will rank higher than
-  ideal.
+  ideal. The sharpest known case: when your task's words are also the
+  repo's own naming convention — asking about "the context agent" in a
+  repo with many `*context*` and `*agent*` files — filename matches
+  dominate and the top results can collapse into a list of files that
+  merely share the name. A rarity weight damps this (a word used once
+  keeps full weight, one used fifty times keeps ~20%), but does not
+  eliminate it, because the filename signal is deliberately exempt from
+  the distinct-term coverage multiplier. Naming a specific behavior or
+  symbol instead of a directory-shaped noun gives markedly better
+  results.
 - **Ignore rules match git's own.** Discovery honors every source git
   does — nested `.gitignore` files (scoped to their own subtree, with
   deeper rules overriding shallower ones), repo-local

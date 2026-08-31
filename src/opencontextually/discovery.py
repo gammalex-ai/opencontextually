@@ -48,6 +48,52 @@ _SOURCE_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".c", ".cpp", ".h", ".hpp",
 }
 
+# --- bug fix: golden test fixtures read as authoritative configuration ----
+#
+# DATA_DIR_SEGMENTS is matched against a whole path segment, so it caught a
+# directory named exactly "fixtures" but not one named "demo_fixtures".
+# Found on a real 42,000-file repo: a JSON golden test bundle under
+# `verification/demo_fixtures/` kept role="config" (because ".json" is in
+# CONFIG_EXTENSIONS) and was then compared against a *roadmap* document by
+# configuration_discrepancy, producing two findings -- both false. Every
+# precision gate downstream passed honestly; the file simply should never
+# have been treated as project configuration in the first place.
+#
+# _DATA_DIR_WORDS are matched against the *words inside* a segment, so
+# "demo_fixtures", "test-fixtures", and "golden_fixture_data" are all
+# recognized the way a bare "fixtures" already was.
+#
+# Only the fixture family gets this treatment, deliberately. Word-matching
+# the rest of DATA_DIR_SEGMENTS would catch "data_models/", "build_tools/",
+# and "vendor_api/" -- all plausible hand-written source directories -- and
+# selector.DATA_PATH_PENALTY damps the *whole* score of every file under a
+# data path, source files included. A directory with "fixture" in its name
+# holds test data under every convention we are aware of; "data", "build",
+# and "vendor" as word fragments carry no such guarantee.
+_DATA_DIR_WORDS = {"fixture", "fixtures"}
+
+_SEGMENT_WORD_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def is_data_dir_segment(segment: str) -> bool:
+    """True when `segment` names a directory holding bulk data, vendored
+    code, build output, or test fixtures rather than hand-written project
+    material. Matches a whole segment against DATA_DIR_SEGMENTS, and the
+    words inside a compound segment against _DATA_DIR_WORDS -- see the
+    comment block above.
+
+    Shared by _classify_role() here and selector._in_data_path() so a path
+    is judged data-like the same way everywhere in the package.
+    """
+    lowered = segment.lower()
+    if lowered in DATA_DIR_SEGMENTS:
+        return True
+    return any(
+        word in _DATA_DIR_WORDS
+        for word in _SEGMENT_WORD_SPLIT_RE.split(lowered)
+        if word
+    )
+
 REASON_IGNORED = "ignored"
 REASON_BINARY = "binary"
 REASON_OVERSIZE = "oversize"
@@ -292,7 +338,7 @@ def _classify_role(rel_path: str) -> str:
     if "tests" in dir_parts or name.startswith("test_") or name.endswith("_test.py"):
         return "test"
 
-    if ext not in _SOURCE_EXTENSIONS and any(p.lower() in DATA_DIR_SEGMENTS for p in dir_parts):
+    if ext not in _SOURCE_EXTENSIONS and any(is_data_dir_segment(p) for p in dir_parts):
         return "other"
 
     if ext in CONFIG_EXTENSIONS or "config" in dir_parts:

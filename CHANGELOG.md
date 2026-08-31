@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1] - 2026-08-30
+
+### Fixed
+
+- `configuration_discrepancy` no longer reads JSON/YAML **test fixtures as
+  project configuration**. Directory names were matched whole, so `fixtures/`
+  was recognized as test data but `demo_fixtures/` was not. Found on a real
+  42,000-file repository, where a golden test bundle was compared against a
+  roadmap document and produced two findings — both false. Compound fixture
+  directory names (`demo_fixtures`, `test-fixtures`, `golden_fixture_data`)
+  are now recognized; `data`, `build`, and `vendor` are deliberately still
+  matched whole, since `data_models/` and `build_tools/` are plausible
+  hand-written source directories.
+- `trace["rules_run"]` (and the "Checks run:" footer) no longer claim a check
+  ran when it did not. The list was hardcoded, so a task matching nothing in
+  the repo — which skips both checks — still reported both as having run. An
+  empty selection now correctly reports `Checks run: selection only`.
+- README's flagship example output was several releases stale, showing the
+  pre-rewrite exclusion footer. It is now regenerated and pinned by a test.
+- README's `configuration_discrepancy` precision claim ("fired on zero of
+  nine real repos") is corrected to record the false positives found on the
+  tenth and eleventh.
+- `pytest` now always tests the current checkout. An editable install from
+  another clone put its own path on `sys.path` ahead of the repository under
+  test, so a run from a second clone or a git worktree could pass while
+  exercising different code entirely. `pythonpath = ["src"]` fixes the
+  default and `tests/conftest.py` fails loudly if it is ever circumvented.
+
 ## [0.1.0] - 2026-08-27
 
 Initial release. Not yet published on PyPI — install with `pip install -e .`

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "opencontextually"
-version = "0.1.0.dev0"
+version = "0.1.1"
 description = "Give your AI agent the right context before it acts."
 readme = "README.md"
 license = { text = "MIT" }
@@ -15,7 +15,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
+    # >=7.0 for the `pythonpath` ini option below, which is what makes a bare
+    # `pytest` test *this* checkout rather than whatever an editable install
+    # happens to have put on sys.path. See tests/conftest.py.
+    "pytest>=7.0",
 ]
 mcp = [
     "mcp>=1.2,<2",
@@ -31,3 +34,13 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put this checkout's src/ at the front of sys.path for every test run.
+#
+# Without it, `pip install -e .` writes a .pth file pointing at whichever
+# clone was installed, and that path wins over the repository you are
+# actually sitting in. A developer in a git worktree could then run
+# `pytest`, watch it pass, and have tested a different checkout entirely --
+# a green suite that proves nothing about the code in front of them. That
+# is a correctness problem with the test suite, not an environment quirk,
+# so the fix lives in the repository rather than in a developer's shell.
+pythonpath = ["src"]
