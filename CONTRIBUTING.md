@@ -9,7 +9,7 @@ Thanks for being here. The fastest ways in:
 | Add a benchmark case from a repo you know | [ContextBench case](https://github.com/gammalex-ai/opencontextually/issues/new?template=contextbench_case.yml) |
 | Tell us about something you built | [Integration](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml) |
 | Find something concrete to work on | [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md) |
-| Ask a question first | [Discord](DISCORD_INVITE_URL) · [Discussions](https://github.com/gammalex-ai/opencontextually/discussions) |
+| Ask a question first | [Discord](DISCORD_INVITE_URL) (`#gctx-help`, `#context-engineering`) · [Discussions](https://github.com/gammalex-ai/opencontextually/discussions) |
 
 [COMMUNITY.md](COMMUNITY.md) describes each contribution path in full. This
 file is the mechanics: setup, tests, and what is in scope.

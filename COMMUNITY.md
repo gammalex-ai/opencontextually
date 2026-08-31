@@ -20,6 +20,28 @@ to phrase, and agents we do not run.
 Rule of thumb: if it has a reproduction, open an issue. If it needs a
 conversation first, Discord or Discussions.
 
+### The Discord, channel by channel
+
+| Channel | What it's for |
+| --- | --- |
+| **#welcome** | Start here. What this project is, and what it deliberately is not. |
+| **#announcements** | Releases, benchmark results, breaking changes. Read-only. |
+| **#gctx-help** | "It picked the wrong files", "how do I scope this to a subdirectory", install trouble. Bring the task string and the repo shape. |
+| **#context-engineering** | The open question — what an agent should read before it acts, how to phrase a task, how to prove selection was right. ContextBench cases and answer-key debates live here too. |
+| **#integrations** | Building against `gctx --json` or the MCP server. Interface questions, and coordination so two people don't build the same wrapper. |
+| **#show-what-you-built** | Editor extensions, harness wrappers, CI actions, experiments. Post it here first; we pull featured entries into the README from what shows up. |
+| **#context-failures** | An agent read the wrong context and did the wrong thing. The rawest, most useful signal this project gets. |
+| **🔊 gctx office hours** | Voice. Screen-share a repository, run `gctx` on a task you know the answer to, and argue with the result live. |
+
+**One routing rule worth honouring:** a good context failure that only ever
+exists in `#context-failures` is lost the moment it scrolls. Talk it
+through in the channel, then
+[file it as an issue](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
+— that is what makes it a permanent test case instead of a conversation.
+The same goes for a ContextBench case discussed in
+`#context-engineering`, and for anything in `#show-what-you-built` you want
+listed in the README's Ecosystem section.
+
 Everything here is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 Security issues go through [SECURITY.md](SECURITY.md) instead — please
 don't open a public issue for those.
