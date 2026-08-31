@@ -1,0 +1,116 @@
+{
+  "_comment": [
+    "Hand-checked answer keys for the corpus tasks: the files that actually",
+    "implement or test the behaviour each task names, read out of each project",
+    "at the commit pinned in corpus.example.json.",
+    "",
+    "`group` is the honest part. The six 'tuned' repositories were used while",
+    "tuning ranking constants (RELATIONSHIP_BONUS, HISTORY_DOC_PENALTY,",
+    "DISCOVERY_LIMIT), so results on them are fitted to some unknown degree.",
+    "The four 'held_out' keys were written before OpenContextually was ever",
+    "run against those repositories on these tasks, and nothing was tuned",
+    "afterwards. Quote both numbers or neither.",
+    "",
+    "A key lists what a developer would need open to fix the thing, not every",
+    "file that mentions it: the implementation, the dependency the fix reaches",
+    "through, the configuration contract where there is one, and the test."
+  ],
+  "keys": [
+    {
+      "repo": "httpx", "group": "tuned",
+      "task": "redirect loses the authorization header",
+      "files": {
+        "httpx/_client.py": "direct task match (_build_redirect_request / _redirect_headers)",
+        "httpx/_auth.py": "imported dependency (builds the Authorization header)",
+        "httpx/_models.py": "imported dependency (Headers)",
+        "tests/client/test_redirects.py": "associated test"
+      }
+    },
+    {
+      "repo": "requests", "group": "tuned",
+      "task": "session cookie persists across redirects",
+      "files": {
+        "src/requests/sessions.py": "direct task match (resolve_redirects)",
+        "src/requests/cookies.py": "imported dependency (extract_cookies_to_jar)",
+        "src/requests/models.py": "imported dependency (Response.cookies)",
+        "tests/test_requests.py": "associated test"
+      }
+    },
+    {
+      "repo": "flask", "group": "tuned",
+      "task": "session cookie is not set on redirect",
+      "files": {
+        "src/flask/sessions.py": "direct task match (save_session / set_cookie)",
+        "src/flask/app.py": "imported dependency (calls save_session)",
+        "tests/test_basic.py": "associated test"
+      }
+    },
+    {
+      "repo": "click", "group": "tuned",
+      "task": "option prompt does not hide the input",
+      "files": {
+        "src/click/termui.py": "direct task match (prompt(hide_input=...))",
+        "src/click/core.py": "imported dependency (Option.prompt_for_value)",
+        "tests/test_termui.py": "associated test"
+      }
+    },
+    {
+      "repo": "sqlfluff", "group": "tuned",
+      "task": "indentation rule fires on a templated line",
+      "files": {
+        "src/sqlfluff/rules/layout/LT02.py": "direct task match (the indentation rule)",
+        "src/sqlfluff/utils/reflow/reindent.py": "imported dependency (indent computation)"
+      }
+    },
+    {
+      "repo": "django", "group": "tuned",
+      "task": "queryset filter drops the second condition",
+      "files": {
+        "django/db/models/query.py": "direct task match (_filter_or_exclude)",
+        "django/db/models/sql/query.py": "imported dependency (add_q)",
+        "django/db/models/query_utils.py": "imported dependency (Q combines conditions)"
+      }
+    },
+
+    {
+      "repo": "black", "group": "held_out",
+      "task": "string normalization changes the wrong quotes",
+      "files": {
+        "src/black/strings.py": "direct task match (normalize_string_quotes)",
+        "src/black/linegen.py": "imported dependency (calls it while generating lines)",
+        "src/black/mode.py": "configuration contract (string_normalization flag)",
+        "tests/test_black.py": "associated test"
+      }
+    },
+    {
+      "repo": "rich", "group": "held_out",
+      "task": "table column width ignores the terminal size",
+      "files": {
+        "rich/table.py": "direct task match (_calculate_column_widths)",
+        "rich/measure.py": "imported dependency (Measurement.with_maximum)",
+        "rich/console.py": "imported dependency (terminal size detection)",
+        "tests/test_table.py": "associated test"
+      }
+    },
+    {
+      "repo": "pydantic", "group": "held_out",
+      "task": "field validator not called on assignment",
+      "files": {
+        "pydantic/main.py": "direct task match (__setattr__ / validate_assignment handler)",
+        "pydantic/functional_validators.py": "imported dependency (field_validator)",
+        "pydantic/config.py": "configuration contract (validate_assignment)",
+        "tests/test_validators.py": "associated test"
+      }
+    },
+    {
+      "repo": "fastapi", "group": "held_out",
+      "task": "dependency override not applied in nested routers",
+      "files": {
+        "fastapi/routing.py": "direct task match (include_router / dependency_overrides_provider)",
+        "fastapi/dependencies/utils.py": "imported dependency (solve_dependencies applies overrides)",
+        "fastapi/applications.py": "configuration contract (dependency_overrides)",
+        "tests/test_dependency_overrides.py": "associated test"
+      }
+    }
+  ]
+}
