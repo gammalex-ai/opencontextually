@@ -81,7 +81,55 @@ Three things happened beyond ranking:
 
 ## Try it on something real
 
-Don't invent a demo task. Point it at a repository you already know:
+OpenContextually runs entirely on your machine. Point it at any local
+repository and give it a task.
+
+### FastAPI
+
+```bash
+git clone https://github.com/fastapi/fastapi.git
+cd fastapi
+
+python -m venv .venv
+source .venv/bin/activate
+
+pip install opencontextually
+
+gctx "dependency override not applied in nested routers"
+```
+
+> Using fish? Activate with `source .venv/bin/activate.fish`.
+
+On the pinned FastAPI benchmark, OpenContextually scans thousands of files
+and returns a small, ranked context package in about **2 seconds**.
+
+Want to see why each file was selected?
+
+```bash
+gctx "dependency override not applied in nested routers" -v
+```
+
+### Flask
+
+```bash
+git clone https://github.com/pallets/flask.git
+cd flask
+
+python -m venv .venv
+source .venv/bin/activate
+
+pip install opencontextually
+
+gctx "session cookie is not set on redirect"
+```
+
+On the pinned Flask benchmark, that run completes in about **0.2 seconds**.
+
+No model. No API key. No network call. Your repository stays local.
+
+### Or use your own repo
+
+Already have a project open? Just run:
 
 ```bash
 gctx "where does authentication actually happen?"
@@ -91,9 +139,13 @@ gctx "why is this migration failing?"
 gctx "what should I read before changing the API response schema?"
 ```
 
-Run it from the root of a project you actually work in. The output above
-was real and unedited; the output you get will be too — and you'll know
-immediately whether it's right, because it's your own code.
+Don't invent a demo task. Give it something you're actually working on.
+
+You'll know pretty quickly whether it found the right context, because
+it's your code.
+
+**Got a bad result?** That's useful too.
+[Bring us the context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml).
 
 ## Search finds matches. Context needs relationships.
 
@@ -261,8 +313,8 @@ entire reason for holding them out:
 
 ### The corpus
 
-Ten public Python projects, each with a plausible task, all reproducible
-with `benchmarks/dogfood.py`:
+The table below is a 10-repository subset of the 14-repository answer-key
+evaluation above, timed and reproducible with `benchmarks/dogfood.py`:
 
 | Repository | Commit | Files | Time | Task |
 | --- | --- | ---: | ---: | --- |
