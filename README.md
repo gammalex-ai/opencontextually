@@ -26,8 +26,9 @@
 ---
 
 ## Overview
+Agents perform better when they receive small, relevant, explainable task context instead of blindly consuming everything.
 
-OpenContextually is an open-source context layer for coding agents. Give it a task:
+That’s why we built OpenContextually, an open-source context layer for coding agents. Give it a task, and it identifies, ranks, and explains the context that matters before the agent starts working.Give it a task:
 
 ```bash
 gctx "fix the authentication bug"
