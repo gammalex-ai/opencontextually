@@ -1,21 +1,67 @@
+<div align="center">
+
 # OpenContextually
 
+### The open context layer before the coding agent.
+
+**Turns a task into a small, ranked, explainable context package from your repository.**
+
+[![PyPI](https://img.shields.io/pypi/v/opencontextually?label=PyPI&color=blue)](https://pypi.org/project/opencontextually/)
+[![Python](https://img.shields.io/pypi/pyversions/opencontextually)](https://pypi.org/project/opencontextually/)
 [![Tests](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml/badge.svg)](https://github.com/gammalex-ai/opencontextually/actions/workflows/test.yml)
-[![PyPI](https://img.shields.io/pypi/v/opencontextually.svg)](https://pypi.org/project/opencontextually/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/github/license/gammalex-ai/opencontextually)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-ready-8A2BE2)](#mcp)
+[![Local](https://img.shields.io/badge/runs-100%25%20local-success)](#scope-determinism-and-safety)
 
-**Your agent can write the code. The harder problem is making sure it
-reads the right code first.**
+**No model · No API key · No network · No database**
 
-[**Quickstart**](#quickstart) · [**Discord**](https://discord.gg/ZNqyQtz5cV) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Contributing**](CONTRIBUTING.md) · [**Community**](COMMUNITY.md)
+[Quickstart](#quickstart) · [How it works](#how-it-works) · [MCP](#mcp) · [Contributing](#contributing)
 
-OpenContextually turns a task into a small, ranked, explainable context
-package from your repository. It is not another coding agent — it is the
-open context layer *before* the agent.
+</div>
 
-> **Agent failed because it read the wrong context?**
-> [Bring us the case.](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
+---
+
+## Overview
+
+OpenContextually is an open-source context layer for coding agents. Give it a task:
+
+```bash
+gctx "fix the authentication bug"
+```
+
+It scans your repository, follows the relationships a keyword search would
+miss — imports, calls, tests, configuration, documentation — and returns a
+small, ranked, explainable package of what to look at before acting. No
+model, no API key, no network call, no database; the same repository and
+task produce byte-identical output every time.
+
+It is not another coding agent. It is the layer that helps the agent — or
+you — figure out what it should know before it starts working.
+
+[**Discord**](https://discord.gg/ZNqyQtz5cV) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Community**](COMMUNITY.md)
+
+## How it works
+
+```text
+your task
+   │
+   ▼
+SELECT → FOLLOW → BOUND → CHECK → EXPLAIN
+   │
+   ▼
+small, ranked, explainable context
+```
+
+| Step | What happens |
+| --- | --- |
+| **SELECT** | Score every file against the task — filename, symbols, content |
+| **FOLLOW** | Walk the import graph to reach files that share no vocabulary with the task at all |
+| **BOUND** | Cap what ships to a small, readable package — considering a file is free, delivering one costs the reader |
+| **CHECK** | Run two deterministic checks for config/doc drift and untested symbols |
+| **EXPLAIN** | Every file in the package carries a reason — a filename match, a symbol match, or "called by X" |
+
+The selection itself is local and deterministic — no model decides what
+matters.
 
 ## Quickstart
 
@@ -27,17 +73,6 @@ gctx "fix the authentication bug"
 
 **No model. No API key. No network. No database. No setup.** One dependency.
 The same repository and task produce byte-identical output every time.
-
-```text
-"fix the authentication bug"
-            │
-            ▼
-  SELECT → FOLLOW → BOUND → CHECK → EXPLAIN
-            │
-            ▼
-      task-ready context
-      every file with a reason
-```
 
 ## What it looks like
 
@@ -102,10 +137,8 @@ gctx "what will break if I change the User model?"
 ```
 
 Give it something you're actually working on — you'll know in seconds
-whether it's right, because it's your code.
-
-**Bad result?** [Bring us the context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
-— that's useful too.
+whether it's right, because it's your code. (More on what to do with a bad
+result under [Help us break it](#help-us-break-it).)
 
 ## Search finds matches. Context needs relationships.
 
@@ -341,6 +374,20 @@ Runs are deterministic: the same task and repository produce byte-identical
 output, which is asserted in the test suite and re-checked by the corpus
 runner. Nothing is written anywhere, and no network call is ever made.
 
+## Help us break it
+
+OpenContextually is early. The most useful contribution right now isn't
+telling us it works — it's finding where it doesn't.
+
+```bash
+pip install opencontextually
+gctx "the bug you're currently fighting"
+```
+
+**Bad result?** [Bring us the context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
+with the task, the files you expected, and the files it actually returned —
+that's exactly what shapes ContextBench and the next fixes.
+
 ## Contributing
 
 Bug reports, context failures, ContextBench cases, integrations, language
@@ -352,3 +399,18 @@ places to start, and [COMMUNITY.md](COMMUNITY.md) is where to find people.
 ## License
 
 MIT
+
+---
+
+<div align="center">
+
+Give your agent better context before it starts working.
+
+```bash
+pip install opencontextually
+gctx "fix the bug"
+```
+
+⭐ [Star OpenContextually](https://github.com/gammalex-ai/opencontextually) · Built by [GammaLex AI](https://github.com/gammalex-ai)
+
+</div>
