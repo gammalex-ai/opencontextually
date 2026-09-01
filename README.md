@@ -19,6 +19,8 @@
 
 [Quickstart](#quickstart) · [How it works](#how-it-works) · [MCP](#mcp) · [Contributing](#contributing)
 
+[Discord](https://discord.gg/ZNqyQtz5cV) · [Discussions](https://github.com/gammalex-ai/opencontextually/discussions) · [ContextBench](benchmarks/README.md) · [Ecosystem](#ecosystem--community) · [Community](COMMUNITY.md)
+
 </div>
 
 ---
@@ -39,8 +41,6 @@ task produce byte-identical output every time.
 
 It is not another coding agent. It is the layer that helps the agent — or
 you — figure out what it should know before it starts working.
-
-[**Discord**](https://discord.gg/ZNqyQtz5cV) · [**Discussions**](https://github.com/gammalex-ai/opencontextually/discussions) · [**ContextBench**](benchmarks/README.md) · [**Ecosystem**](#ecosystem--community) · [**Community**](COMMUNITY.md)
 
 ## How it works
 
