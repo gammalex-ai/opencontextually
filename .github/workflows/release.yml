@@ -94,7 +94,7 @@ jobs:
       # in this repository.
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -112,7 +112,7 @@ jobs:
     steps:
       - name: Compute the PyPI version from the tag
         run: echo "PYPI_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
