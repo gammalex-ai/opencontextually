@@ -15,6 +15,8 @@
 
 **No model · No API key · No network · No database**
 
+**Works with Claude Code · Cursor · Codex · MCP-compatible agents · custom coding agents**
+
 [Quickstart](#quickstart) · [How it works](#how-it-works) · [MCP](#mcp) · [Contributing](#contributing)
 
 </div>
