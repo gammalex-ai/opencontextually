@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 _DEF_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 _IMPORT_TYPES = (ast.Import, ast.ImportFrom)
+_CALL_TYPES = (ast.Call,)
 # Node types checks._python_identifier_words draws words from, besides
 # def/class nodes (which it also draws from -- see FileRecord.identifier_nodes).
 _WORD_NODE_TYPES = (ast.Name, ast.Attribute, ast.arg, ast.alias, ast.keyword)
@@ -65,6 +66,12 @@ class FileRecord:
     imports: list = field(default_factory=list)
     identifier_nodes: list = field(default_factory=list)
     if_nodes: list = field(default_factory=list)
+    # Call sites (`ast.Call` nodes) -- who this file actually *invokes*, not
+    # just imports. See selector._build_call_ownership(): a file naming a
+    # function in `from x import y` and then calling `y(...)` is deliberate
+    # evidence x owns behavior this file depends on, stronger and more
+    # specific than the bare import edge alone.
+    calls: list = field(default_factory=list)
 
 
 class RunCache:
@@ -146,6 +153,8 @@ class RunCache:
                 rec.identifier_nodes.append(node)
             elif isinstance(node, _IMPORT_TYPES):
                 rec.imports.append(node)
+            elif isinstance(node, _CALL_TYPES):
+                rec.calls.append(node)
             elif isinstance(node, _WORD_NODE_TYPES):
                 rec.identifier_nodes.append(node)
             elif isinstance(node, ast.If):

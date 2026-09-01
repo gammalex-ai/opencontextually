@@ -1154,21 +1154,39 @@ def _analyze(
 
     # --- distinct-term coverage ---
     # See COVERAGE_EXPONENT above for the full rationale. Scaled here are
-    # only symbol_score and content_score -- the two components that scale
-    # with how many times a file *mentions* a term, the same repetition-
-    # sensitive pair TEST_SIGNAL_DAMPING already singles out above.
-    # filename_score is left untouched for the reasons given there.
-    # role_bonus is also left untouched: it is a small, flat nudge for a
-    # config/docs file that matched *anything*, not a repetition artifact,
-    # and scaling it down punished the legitimate case of a short config
-    # file (e.g. a two-line .env) that has only one task term to match in
-    # the first place -- observed while adding this fix, against
-    # test_env_secret_never_appears_anywhere_in_serialized_package.
+    # symbol_score, content_score, and role_bonus -- filename_score is left
+    # untouched for the reasons given there (a filename match is a
+    # deliberate, non-repeated signal, not a repetition artifact).
+    #
+    # --- bug fix: a flat role_bonus let one incidental word clear the bar
+    # regardless of the task ------------------------------------------
+    # role_bonus used to be exempt from coverage scaling, on the theory
+    # that a short config file (e.g. a two-line .env) legitimately has
+    # only one task term to match in the first place. That reasoning holds
+    # for a short task too, but ROLE_BONUS (2.0) alone is exactly
+    # SCORE_THRESHOLD -- so on a multi-term task, a docs/config file that
+    # matches a single generic word out of many crossed the bar on the
+    # flat bonus alone, no matter how small a fraction of the task it
+    # actually covered. Observed on a real repo (fastapi): docs/mkdocs.yml
+    # -- a doc-site nav listing, not application configuration -- matched
+    # only because its list of page titles happens to repeat "dependencies"
+    # fourteen times, and ranked #2 for "nested dependencies using yield
+    # are cleaned up in the wrong order" (a 5-term task) ahead of the
+    # source file that actually resolves nested dependencies.
+    #
+    # Coverage-scaling role_bonus the same way symbol/content already are
+    # fixes this without a flat "docs always rank below code" rule (which
+    # would wrongly punish a docs/config file that genuinely covers most
+    # of a documentation-lookup task): the two-line .env case still passes
+    # (test_env_secret_never_appears_anywhere_in_serialized_package,
+    # unchanged) because a short task has little room for coverage to
+    # fall short in the first place.
     distinct_matched_terms = set(filename_terms) | symbol_terms | set(content_term_counts)
     coverage_ratio = (len(distinct_matched_terms) / len(terms)) if terms else 1.0
     coverage_factor = coverage_ratio ** COVERAGE_EXPONENT
     symbol_score *= coverage_factor
     content_score *= coverage_factor
+    role_bonus *= coverage_factor
 
     score = filename_score + symbol_score + content_score + role_bonus
 
@@ -1328,6 +1346,102 @@ def _build_import_graph(
     return py_files, outbound, inbound
 
 
+# --------------------------------------------------------------------------
+# bug fix: an implementation file with no lexical overlap with the task was
+# invisible to ranking, even when the task's own top-ranked file calls it
+# directly.
+#
+# Observed on a real repo (fastapi), "nested dependencies using yield are
+# cleaned up in the wrong order": `routing.py` (ranked #1 on its own lexical
+# merits) calls `solve_dependencies()` three times -- the exact function,
+# defined in `dependencies/utils.py`, that resolves nested sub-dependencies
+# and pushes their yield-cleanup onto the exit stack in order. But
+# `dependencies/utils.py` spells this "generator"/"AsyncExitStack", never
+# "yield"/"nested"/"cleaned"/"order", so its own lexical score (4.0) was
+# dominated by a documentation page whose *nav listing* happens to repeat
+# "dependencies" fourteen times (9.7) and a same-named coincidence in an
+# unrelated test file (6.2, "order" as in form-field order). The file that
+# owns the actual mechanism the task describes never reached the package.
+#
+# The existing import graph (_build_import_graph, above) already reaches
+# `dependencies/utils.py` from `routing.py` via a bare "imports" edge --
+# but the codebase deliberately does not turn a bare import edge into a
+# large score boost (see RELATIONSHIP_BONUS's own comment: an import edge
+# answers "should I look at this?", not "this file is highly relevant").
+# That restraint is correct for "imports the module" -- httpx's
+# `_content.py` and `_decoders.py` import from the same module as
+# `_auth.py` without being about auth at all. What's missing is a
+# *stronger*, more specific relation: not "this file imports that module"
+# but "this file actually calls a named function that module defines" --
+# deliberate, verified use of a specific piece of behavior, not a
+# reference to a whole namespace.
+#
+# _build_call_ownership() computes exactly that narrower relation, reusing
+# the import graph and each file's already-cached `.calls`/`.defs` (no new
+# parsing): for every import edge, keep it only if the importer's call
+# sites name something the target actually defines. select() then grants a
+# file a bonus when at least one of its call-verified callers is itself
+# independently relevant to the task (cleared SCORE_THRESHOLD on its own
+# lexical merits) -- gated on relevance, not scaled by the caller's score,
+# for the same reason RELATIONSHIP_BONUS is flat rather than inherited:
+# being called by something relevant is real, task-independent evidence of
+# ownership; being called by something merely *present* is not, and
+# fan-in from many callers should not compound into an ever-larger bonus
+# (flat, not summed -- the same restraint expand_transitively already
+# applies to fan-out).
+#
+# This is deliberately task-vocabulary-blind: it reads which names get
+# called and which files define them, never the task's words, so it
+# applies identically to a documentation task or a config task -- neither
+# of which have many candidate seeds whose call graph resolves this way,
+# so this mechanism mostly sits idle for them rather than displacing
+# anything. See test_call_ownership.py.
+CALL_OWNERSHIP_BONUS = WEIGHT_SYMBOL
+
+
+def _called_name(call_node: ast.Call) -> str | None:
+    """The bare identifier a `Call` node invokes -- `solve_dependencies` for
+    `solve_dependencies(...)`, `_solve_dependencies` for
+    `self._solve_dependencies(...)`. None for a call through anything else
+    (a subscript, a call result, a lambda, ...), which this relation simply
+    does not cover.
+    """
+    func = call_node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _build_call_ownership(
+    discovered: list[DiscoveredFile], cache: RunCache
+) -> dict[str, set[str]]:
+    """Narrow the first-party import graph to the subset of edges where the
+    importer actually *calls* a symbol the imported file defines -- see the
+    module comment above. Returns imported-file path -> set of paths that
+    call into it this way (already inverted, since callers only ever need
+    "who calls me").
+    """
+    py_files, outbound, _inbound = _build_import_graph(discovered, cache)
+
+    owned_by: dict[str, set[str]] = {}
+    for importer_path, targets in outbound.items():
+        if not targets:
+            continue
+        importer_record = cache.get_record(py_files[importer_path])
+        called_names = {n for n in (_called_name(c) for c in importer_record.calls) if n}
+        if not called_names:
+            continue
+        for target_path in targets:
+            target_record = cache.get_record(py_files[target_path])
+            target_def_names = {d.name for d in target_record.defs}
+            if called_names & target_def_names:
+                owned_by.setdefault(target_path, set()).add(importer_path)
+
+    return owned_by
+
+
 def expand_transitively(
     seed_items: list[ContextItem],
     discovered: list[DiscoveredFile],
@@ -1353,6 +1467,17 @@ def expand_transitively(
     could still be inflated by "api"/"test"-style noise the seed pass
     already learned to distrust.
 
+    Each edge's bonus uses CALL_OWNERSHIP_BONUS instead of the weaker
+    RELATIONSHIP_BONUS when it is call-verified -- see
+    _build_call_ownership() -- rather than every import edge getting the
+    same flat treatment: a file reached because a frontier file actually
+    calls one of its functions is stronger, more specific evidence of
+    ownership than "the frontier file merely imports this module", and
+    this is what lets a zero-lexical-overlap file (own_score 0, reached
+    purely through this relationship, no term to hang an excerpt on) still
+    outrank a bare import neighbour without needing to invent lexical
+    evidence it does not have.
+
     Cycle-safe: a `visited` set (seeds plus anything already expanded) is
     checked before a file is ever added as a candidate, so a cycle in the
     import graph simply stops contributing new files rather than looping.
@@ -1362,6 +1487,7 @@ def expand_transitively(
     """
     cache = cache if cache is not None else RunCache()
     py_files, outbound, inbound = _build_import_graph(discovered, cache)
+    call_owners = _build_call_ownership(discovered, cache)
 
     def _own_score(path: str) -> float:
         """This file's own relevance to the task, independent of who
@@ -1389,7 +1515,9 @@ def expand_transitively(
     while depth <= MAX_DEPTH and frontier:
         candidates: dict[str, tuple[float, list[str], str]] = {}
 
-        bonus = RELATIONSHIP_BONUS * (IMPORT_DECAY ** (depth - 1))
+        decay = IMPORT_DECAY ** (depth - 1)
+        relationship_bonus = RELATIONSHIP_BONUS * decay
+        call_bonus = CALL_OWNERSHIP_BONUS * decay
 
         for path, _hop, provenance in frontier:
             friendly = PurePosixPath(path).name
@@ -1398,21 +1526,21 @@ def expand_transitively(
                 if target in visited or target in candidates:
                     continue
                 edge = f"{path} imports {target}"
-                candidates[target] = (
-                    _own_score(target) + bonus,
-                    provenance + [edge],
-                    f"imported by {friendly}",
-                )
+                if path in call_owners.get(target, ()):
+                    bonus, reason = call_bonus, f"called by {friendly}"
+                else:
+                    bonus, reason = relationship_bonus, f"imported by {friendly}"
+                candidates[target] = (_own_score(target) + bonus, provenance + [edge], reason)
 
             for source in inbound.get(path, ()):
                 if source in visited or source in candidates:
                     continue
                 edge = f"{source} imports {path}"
-                candidates[source] = (
-                    _own_score(source) + bonus,
-                    provenance + [edge],
-                    f"imports {friendly}",
-                )
+                if source in call_owners.get(path, ()):
+                    bonus, reason = call_bonus, f"calls {friendly}"
+                else:
+                    bonus, reason = relationship_bonus, f"imports {friendly}"
+                candidates[source] = (_own_score(source) + bonus, provenance + [edge], reason)
 
         if not candidates:
             break
@@ -2132,6 +2260,42 @@ def select(
                 discovered_file, terms, cache, filename_word_counts, term_weights
             )
             scored.append((score, discovered_file, reason, matched_terms))
+
+    # Call-ownership bonus (see _build_call_ownership() above): a file gets
+    # a flat, capped bonus when at least one of its call-verified callers
+    # is *itself* independently relevant to this task -- judged from the
+    # lexical scores just computed, before any bonus, so two files cannot
+    # bootstrap each other above threshold in a cycle. Task-vocabulary-
+    # blind by construction (reads call/def relationships, never `terms`),
+    # so it applies the same way regardless of what kind of task this is.
+    #
+    # Scoped to files that already matched_terms (some lexical evidence of
+    # their own) -- a file with zero lexical overlap has nothing for
+    # attach_excerpts() to show later, and would be silently evicted from
+    # the package post-excerpt-budgeting no matter how it cleared
+    # SCORE_THRESHOLD. expand_transitively() below already has a correct,
+    # tested path for exactly that case (own_score 0 + relationship bonus,
+    # with provenance driving an import-based excerpt fallback) -- see its
+    # own call-ownership strengthening there. This is deliberately the
+    # narrower half: boosting the *rank* of a file that is already a seed
+    # on its own (if weak) merits, not deciding inclusion from nothing.
+    relevant_paths = {f.path for s, f, _r, _m in scored if s > SCORE_THRESHOLD}
+    call_owners = _build_call_ownership(discovered, cache)
+    if any(callers & relevant_paths for callers in call_owners.values()):
+        boosted: list[tuple[float, DiscoveredFile, str, frozenset[str]]] = []
+        for score, discovered_file, reason, matched_terms in scored:
+            callers = call_owners.get(discovered_file.path, set()) & relevant_paths if matched_terms else set()
+            if callers:
+                score += CALL_OWNERSHIP_BONUS
+                # This is stronger, more specific evidence than a bare
+                # filename/content match (a verified call site, not shared
+                # vocabulary) -- leads the explanation rather than being
+                # silently folded into a score bump next to a weaker
+                # reason, per the "explanation must justify every
+                # inclusion" contract.
+                reason = f"called by {PurePosixPath(sorted(callers)[0]).name}"
+            boosted.append((score, discovered_file, reason, matched_terms))
+        scored = boosted
 
     above = [s for s in scored if s[0] > SCORE_THRESHOLD]
 
