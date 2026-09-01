@@ -325,10 +325,14 @@ here is aspirational.
 | **MCP server** | `opencontextually-mcp`, stdio, one tool: `get_context(task, root)` | Supported — see [MCP](#mcp) |
 | **Any MCP-speaking client** | Anything that can launch a stdio MCP server and call one tool | Should work; only the server is tested |
 
-### Community integrations
+### Dedicated integrations
 
-Nothing here yet — an empty table beats a fictional one. `--json` and the
-MCP server are both stable, so anything below is buildable today:
+OpenContextually already works with Claude Code, Cursor, Codex,
+MCP-compatible agents, and custom coding agents through the CLI and MCP.
+
+Dedicated editor extensions, wrappers, and deeper integrations are still
+early. `--json` and the MCP server are both stable, so anything below is
+buildable today:
 
 - an editor/IDE extension, or a wrapper for an agent harness (Cursor,
   Continue, OpenCode, Aider, your own)
@@ -336,7 +340,7 @@ MCP server are both stable, so anything below is buildable today:
 - language support beyond Python's import graph — see
   [GOOD_FIRST_CONTEXT.md](GOOD_FIRST_CONTEXT.md)
 
-**Built something with `gctx`?** [Tell us](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
+Nothing here yet? Build one. [Tell us](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
 and we may feature it here.
 
 ### The question this project is trying to answer
