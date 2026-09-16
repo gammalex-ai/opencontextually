@@ -33,8 +33,27 @@ def get_context(task: str, root: str | Path = ".") -> ContextPackage:
 
     Returns a ContextPackage: the included files (each with a reason and
     score), and a count of everything excluded, bucketed by reason.
+
+    Raises `ValueError` if `task` is empty or whitespace-only, and
+    `NotADirectoryError` if `root` does not exist or is not a directory.
+
+    --- bug fix: invalid input silently looked like an empty project -----
+    Before this check, `Path(root).resolve()` accepted any string --
+    `discover()` then walked a nonexistent or non-directory path and
+    simply found nothing, so a typo'd root or an empty/whitespace task
+    returned a normal-looking, successful ContextPackage with zero
+    included files rather than surfacing the mistake. The CLI already
+    caught a bad `--root` itself (see cli.py) before ever calling this
+    function, so only direct Python-API and MCP callers were exposed --
+    but this is the shared entry point both bypass, so the fix belongs
+    here rather than duplicated per caller.
     """
+    if not task or not task.strip():
+        raise ValueError("task must be a non-empty string")
+
     root_path = Path(root).resolve()
+    if not root_path.is_dir():
+        raise NotADirectoryError(f"root {str(root)!r} does not exist or is not a directory")
 
     # One cache per call, threaded through every stage below, so a file is
     # read and ast.parse/ast.walk'd at most once for this run -- see

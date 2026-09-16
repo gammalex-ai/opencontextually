@@ -4,25 +4,53 @@
     "implement or test the behaviour each task names, read out of each project",
     "at the commit pinned in corpus.example.json.",
     "",
-    "`group` is the honest part. The six 'tuned' repositories were used while",
-    "tuning ranking constants (RELATIONSHIP_BONUS, HISTORY_DOC_PENALTY,",
-    "DISCOVERY_LIMIT), so results on them are fitted to some unknown degree.",
-    "The four 'held_out' keys were written before OpenContextually was ever",
-    "run against those repositories on these tasks, and nothing was tuned",
-    "afterwards. Quote both numbers or neither.",
+    "`group` is the honest part, and these names were changed from an earlier",
+    "'tuned'/'held_out'/'held_out_2' scheme that read as stronger evidence than",
+    "it was. The six 'development' repositories were used while tuning ranking",
+    "constants (RELATIONSHIP_BONUS, HISTORY_DOC_PENALTY, DISCOVERY_LIMIT), so",
+    "results on them are fitted to some unknown degree.",
+    "",
+    "'regression' and 'regression_2' were both written and committed before",
+    "OpenContextually ever ran against those repositories on these tasks -- but",
+    "neither is a held-out set in the sense of 'predicts a repository this",
+    "project has never seen'. 'regression' exposed the duplicate-copy failure",
+    "class, which then drove a ranking change (see below); 'regression_2' was",
+    "reserved specifically to check whether that change generalized, and its",
+    "result informed the decision to revert it. Both rounds are now spent as",
+    "evidence: useful for tracking whether a future ranking change regresses",
+    "a score that was never touched *for that change*, but not proof this",
+    "project generalizes to unseen repositories. Quote all three numbers",
+    "together, per group, never combined into a single figure -- the README",
+    "and dogfood.py's own report both do this now.",
     "",
     "A key lists what a developer would need open to fix the thing, not every",
     "file that mentions it: the implementation, the dependency the fix reaches",
     "through, the configuration contract where there is one, and the test.",
     "",
-    "The 'held_out_2' group is a second reserved set, added after the first held-out run exposed the duplicate-copy failure class. Their keys were written and committed before the fix for that class existed, so they measure whether it generalizes rather than whether it was fitted.",
+    "Result of the regression_2 round: the near-duplicate document family cap",
+    "it was reserved for was REVERTED. It left regression_2 unchanged",
+    "(11/13, 10/13), and auditing what it removed showed it collapsing",
+    "genuinely different pages that share a universal filename -- black's",
+    "docs/index.md against docs/contributing/index.md. The legacy/vendored",
+    "tree penalty from the same round was kept: it recovers pydantic's",
+    "main.py and its audit is clean.",
     "",
-    "Result of the held_out_2 round: the near-duplicate document family cap it was reserved for was REVERTED. It left held_out_2 unchanged (11/13, 10/13), and auditing what it removed showed it collapsing genuinely different pages that share a universal filename -- black's docs/index.md against docs/contributing/index.md. The legacy/vendored tree penalty from the same round was kept: it recovers pydantic's main.py and its audit is clean. held_out_2 is now spent as evidence and serves as regression data."
+    "An entry may also carry `anchors`: for a subset of `files`, a list of",
+    "substrings that must appear in the delivered excerpt text for that file",
+    "-- not just the filename -- to count for excerpt-hit recall (see",
+    "dogfood.py's answer_key_excerpt_* fields). Plain file recall (the",
+    "existing found/total numbers) does not require this: a file with no",
+    "`anchors` entry only has to be included to count, same as before.",
+    "Added after fastapi's key scored 4/4 file recall while its routing.py",
+    "excerpt was a stub (`_frontend_dependency_endpoint`, pragma: no cover)",
+    "and its dependencies/utils.py excerpt omitted the override lookup",
+    "entirely -- correct filenames, wrong content, and file recall alone",
+    "could not tell the difference."
   ],
   "keys": [
     {
       "repo": "httpx",
-      "group": "tuned",
+      "group": "development",
       "task": "redirect loses the authorization header",
       "files": {
         "httpx/_client.py": "direct task match (_build_redirect_request / _redirect_headers)",
@@ -33,7 +61,7 @@
     },
     {
       "repo": "requests",
-      "group": "tuned",
+      "group": "development",
       "task": "session cookie persists across redirects",
       "files": {
         "src/requests/sessions.py": "direct task match (resolve_redirects)",
@@ -44,7 +72,7 @@
     },
     {
       "repo": "flask",
-      "group": "tuned",
+      "group": "development",
       "task": "session cookie is not set on redirect",
       "files": {
         "src/flask/sessions.py": "direct task match (save_session / set_cookie)",
@@ -54,7 +82,7 @@
     },
     {
       "repo": "click",
-      "group": "tuned",
+      "group": "development",
       "task": "option prompt does not hide the input",
       "files": {
         "src/click/termui.py": "direct task match (prompt(hide_input=...))",
@@ -64,7 +92,7 @@
     },
     {
       "repo": "sqlfluff",
-      "group": "tuned",
+      "group": "development",
       "task": "indentation rule fires on a templated line",
       "files": {
         "src/sqlfluff/rules/layout/LT02.py": "direct task match (the indentation rule)",
@@ -73,7 +101,7 @@
     },
     {
       "repo": "django",
-      "group": "tuned",
+      "group": "development",
       "task": "queryset filter drops the second condition",
       "files": {
         "django/db/models/query.py": "direct task match (_filter_or_exclude)",
@@ -83,7 +111,7 @@
     },
     {
       "repo": "black",
-      "group": "held_out",
+      "group": "regression",
       "task": "string normalization changes the wrong quotes",
       "files": {
         "src/black/strings.py": "direct task match (normalize_string_quotes)",
@@ -94,7 +122,7 @@
     },
     {
       "repo": "rich",
-      "group": "held_out",
+      "group": "regression",
       "task": "table column width ignores the terminal size",
       "files": {
         "rich/table.py": "direct task match (_calculate_column_widths)",
@@ -105,7 +133,7 @@
     },
     {
       "repo": "pydantic",
-      "group": "held_out",
+      "group": "regression",
       "task": "field validator not called on assignment",
       "files": {
         "pydantic/main.py": "direct task match (__setattr__ / validate_assignment handler)",
@@ -116,7 +144,7 @@
     },
     {
       "repo": "fastapi",
-      "group": "held_out",
+      "group": "regression",
       "task": "dependency override not applied in nested routers",
       "task_variants": {
         "technical": "propagate dependency_overrides_provider through nested APIRouter inclusion",
@@ -127,11 +155,20 @@
         "fastapi/dependencies/utils.py": "imported dependency (solve_dependencies applies overrides)",
         "fastapi/applications.py": "configuration contract (dependency_overrides)",
         "tests/test_dependency_overrides.py": "associated test"
+      },
+      "anchors": {
+        "fastapi/routing.py": [
+          "dependency_overrides_provider"
+        ],
+        "fastapi/dependencies/utils.py": [
+          "dependency_overrides_provider",
+          "solve_dependencies"
+        ]
       }
     },
     {
       "repo": "attrs",
-      "group": "held_out_2",
+      "group": "regression_2",
       "github": "python-attrs/attrs",
       "commit": "764bf92a1c96abe4615b59f3e5a7b738b0340a94",
       "task": "frozen class still allows attribute assignment",
@@ -144,7 +181,7 @@
     },
     {
       "repo": "urllib3",
-      "group": "held_out_2",
+      "group": "regression_2",
       "github": "urllib3/urllib3",
       "commit": "85a8a9cfad3398bc504d088233d0a11af219a82a",
       "task": "retry does not honor the backoff factor",
@@ -156,7 +193,7 @@
     },
     {
       "repo": "pytest",
-      "group": "held_out_2",
+      "group": "regression_2",
       "github": "pytest-dev/pytest",
       "commit": "2cd217e5b8842f842bc6e25514db8946b3108b2d",
       "task": "monkeypatch does not undo an environment variable",
@@ -167,7 +204,7 @@
     },
     {
       "repo": "scrapy",
-      "group": "held_out_2",
+      "group": "regression_2",
       "github": "scrapy/scrapy",
       "commit": "53eb8d60bcd0160633f6513478f958ed5a457363",
       "task": "duplicate requests are not filtered",

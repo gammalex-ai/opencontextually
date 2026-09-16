@@ -50,6 +50,43 @@ jobs:
           fi
       - run: python -m build
       - run: twine check dist/*
+
+      - name: Inspect archives for forbidden files
+        run: |
+          set -eu
+          for archive in dist/*.tar.gz dist/*.whl; do
+            echo "== $archive =="
+            if [ "${archive##*.}" = "gz" ]; then
+              listing="$(tar tzf "$archive")"
+            else
+              listing="$(python -m zipfile -l "$archive" | awk '{print $1}')"
+            fi
+            echo "$listing" | grep -E '__pycache__|\.pyc$|\.DS_Store$|corpus\.local\.json$' && {
+              echo "forbidden file(s) found in $archive" >&2
+              exit 1
+            } || true
+          done
+
+      # --- bug fix: the published sdist could not run its own tests ------
+      #
+      # v0.2.4 shipped a sdist that fails `pytest` collection with
+      # `FileNotFoundError: benchmarks/dogfood.py` -- tests/ was grafted
+      # into the archive, but the benchmarks/ module those tests import
+      # was not. Nothing in this pipeline ever built the actual artifact
+      # a `pip download` gets and tested it, only the source checkout (via
+      # an editable install) and the wheel's version metadata below. This
+      # step closes that gap: extract the sdist exactly as a downstream
+      # packager would, install it into a clean virtualenv with no source
+      # checkout on the path, and run its own shipped tests.
+      - name: Extract, install, and test the sdist
+        run: |
+          set -eu
+          mkdir -p /tmp/sdist-extract
+          tar xzf dist/*.tar.gz -C /tmp/sdist-extract
+          cd /tmp/sdist-extract/*/
+          python -m venv /tmp/sdist-venv
+          /tmp/sdist-venv/bin/pip install ".[dev]"
+          /tmp/sdist-venv/bin/pytest
       # --- bug fix: __version__ drifted from the published wheel's own
       # metadata (0.2.2 shipped with a hardcoded __version__ = "0.2.0") ---
       #
@@ -78,6 +115,18 @@ jobs:
 
           test "$PACKAGE_VERSION" = "$MODULE_VERSION"
           test "$PACKAGE_VERSION" = "$CLI_VERSION"
+
+          # gammx is the primary command; gctx/octx/opencontextually are
+          # kept as aliases to the same entry point. Every one of them
+          # must actually be on PATH and runnable from a clean install,
+          # not just the one this job happened to check above.
+          # (opencontextually-mcp isn't checked here: it has no --version
+          # flag and immediately starts a stdio server, so invoking it
+          # like the others would just hang the job -- its own extra is
+          # exercised in the `package` job's console-script check.)
+          for script in gctx octx opencontextually; do
+            /tmp/wheel-smoke-venv/bin/"$script" --version
+          done
       - uses: actions/upload-artifact@v7
         with:
           name: dist
