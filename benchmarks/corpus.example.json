@@ -13,9 +13,9 @@
     "`commit` is what the README's figures were measured against; file counts and",
     "timings drift as these projects change.",
     "",
-    "Tasks are phrased as a developer would describe the symptom. Keep at least one",
-    "whose words collide with the repo's own naming convention -- that is the known",
-    "weak case (see README, 'What it deliberately does not do')."
+    "The strings in `tasks` are the historical, comparable phrasing. Alternate",
+    "technical and natural wording belongs in answer-keys.json task_variants so every",
+    "phrasing shares one ground truth. Use dogfood.py --phrasing to select the series."
   ],
   "measured_on": "2026-08-30",
   "repos": [

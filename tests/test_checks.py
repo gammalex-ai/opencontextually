@@ -47,7 +47,10 @@ def test_detects_mismatched_duration_with_nested_yaml_key(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "# Security\n\n- Session timeout: 30 minutes.\n",
+        "# Security\n\n"
+        "| Configuration key | Required value |\n"
+        "| --- | --- |\n"
+        "| `session.timeout_minutes` | 30 minutes |\n",
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
@@ -58,7 +61,7 @@ def test_detects_mismatched_duration_with_nested_yaml_key(tmp_path):
     assert finding["setting"] == "session.timeout_minutes"
     assert finding["config"] == {"path": "config/auth.yaml", "line": 2, "value": "60"}
     assert finding["doc"]["path"] == "docs/security.md"
-    assert finding["doc"]["line"] == 3
+    assert finding["doc"]["line"] == 5
     assert "30" in finding["doc"]["value"]
 
 
@@ -88,6 +91,44 @@ def test_fenced_markdown_code_block_ignored(tmp_path):
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
     assert findings == []
+
+
+def test_authoritative_fenced_configuration_is_structured_evidence(tmp_path):
+    _write(
+        tmp_path / "config" / "auth.yaml",
+        "session:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "docs" / "security.md",
+        "# Security\n\n"
+        "Required configuration:\n\n"
+        "```yaml\n"
+        "session:\n"
+        "  timeout_minutes: 30\n"
+        "```\n",
+    )
+
+    findings = find_configuration_discrepancies(_discover(tmp_path))
+
+    assert len(findings) == 1
+    assert findings[0]["setting"] == "session.timeout_minutes"
+    assert findings[0]["doc"]["line"] == 7
+
+
+def test_historical_key_value_table_is_not_current_configuration_evidence(tmp_path):
+    _write(
+        tmp_path / "config" / "app.yaml",
+        "server:\n  timeout_minutes: 60\n",
+    )
+    _write(
+        tmp_path / "CHANGELOG.md",
+        "# Changelog\n\n"
+        "| Setting | Value |\n"
+        "| --- | --- |\n"
+        "| server.timeout_minutes | 30 minutes |\n",
+    )
+
+    assert find_configuration_discrepancies(_discover(tmp_path)) == []
 
 
 def test_rst_code_block_directive_ignored(tmp_path):
@@ -127,10 +168,7 @@ def test_rst_literal_block_ignored(tmp_path):
     assert findings == []
 
 
-def test_genuine_prose_assertion_still_detected_alongside_code_example(tmp_path):
-    # A doc that contains BOTH a code example and a genuine prose assertion
-    # must still detect the real conflict from the prose line -- the fix
-    # excludes code contexts, not the whole file.
+def test_narrative_prose_is_not_configuration_evidence(tmp_path):
     _write(
         tmp_path / "config" / "auth.yaml",
         "session:\n  timeout_minutes: 60\n",
@@ -138,7 +176,7 @@ def test_genuine_prose_assertion_still_detected_alongside_code_example(tmp_path)
     _write(
         tmp_path / "docs" / "security.md",
         "# Security\n\n"
-        "- Session timeout: 30 minutes.\n\n"
+        "We ran the session timeout test 30 times before release.\n\n"
         "Example override:\n\n"
         "```yaml\n"
         "session:\n"
@@ -147,12 +185,7 @@ def test_genuine_prose_assertion_still_detected_alongside_code_example(tmp_path)
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
-    matches = [f for f in findings if f["rule"] == "configuration_discrepancy"]
-    assert matches, findings
-    finding = matches[0]
-    assert finding["doc"]["path"] == "docs/security.md"
-    assert finding["doc"]["line"] == 3
-    assert "30" in finding["doc"]["value"]
+    assert findings == []
 
 
 # --- negative: same value on both sides -> no finding ----------------------
@@ -165,7 +198,8 @@ def test_same_value_both_sides_no_finding(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "Session timeout: 30 minutes.\n",
+        "| Setting | Default |\n| --- | --- |\n"
+        "| session.timeout_minutes | 30 minutes |\n",
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
@@ -187,7 +221,8 @@ def test_unrelated_keys_with_same_generic_token_no_finding(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "Session timeout: 30 minutes.\n",
+        "| Setting | Default |\n| --- | --- |\n"
+        "| session.timeout_seconds | 30 minutes |\n",
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
@@ -239,7 +274,8 @@ def test_unit_normalization_agrees_no_finding(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "Session timeout: 30 minutes.\n",
+        "| Setting | Default |\n| --- | --- |\n"
+        "| session.timeout_minutes | 30 minutes |\n",
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
@@ -253,7 +289,8 @@ def test_unit_normalization_disagrees_is_a_finding(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "Session timeout: 30 minutes.\n",
+        "| Setting | Default |\n| --- | --- |\n"
+        "| session.timeout_minutes | 30 minutes |\n",
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
@@ -309,7 +346,8 @@ def test_secret_looking_key_never_reported_even_if_numeric(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "Api key ttl minutes: 30 minutes.\n",
+        "| Setting | Default |\n| --- | --- |\n"
+        "| session.api_key_ttl_minutes | 30 minutes |\n",
     )
 
     findings = find_configuration_discrepancies(_discover(tmp_path))
@@ -664,7 +702,10 @@ def _unrelated_conflict_fixture(tmp_path):
     )
     _write(
         tmp_path / "docs" / "security.md",
-        "# Security\n\n- Session timeout: 30 minutes.\n",
+        "# Security\n\n"
+        "| Configuration key | Required value |\n"
+        "| --- | --- |\n"
+        "| session.timeout_minutes | 30 minutes |\n",
     )
     return _discover(tmp_path)
 
@@ -934,7 +975,11 @@ def test_real_configuration_discrepancy_still_detected(tmp_path):
     fixture directory must still be compared against a doc assertion.
     """
     _write(tmp_path / "config" / "auth.json", '{"session": {"timeout_minutes": 60}}\n')
-    _write(tmp_path / "docs" / "security.md", "- Session timeout: 30 minutes.\n")
+    _write(
+        tmp_path / "docs" / "security.md",
+        "| Setting | Default |\n| --- | --- |\n"
+        "| session.timeout_minutes | 30 minutes |\n",
+    )
     discovered = _discover(tmp_path)
     findings = find_configuration_discrepancies(discovered)
     assert findings, "a real config-vs-doc discrepancy must still be reported"

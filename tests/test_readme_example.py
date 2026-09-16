@@ -29,6 +29,7 @@ MORE_RE = re.compile(r"\+(?P<more>\d+) more")
 DROPPED_RE = re.compile(r"⚠ (?P<dropped>\d+) relevant files dropped")
 SCANNED_RE = re.compile(r"(?P<scanned>\d+) files scanned, not relevant enough")
 NOT_SCANNED_RE = re.compile(r"(?P<not_scanned>\d+) files not scanned")
+NO_EXCERPT_RE = re.compile(r"(?P<no_excerpt>\d+) relevant files? with nothing quotable to show")
 
 
 def _example_block() -> str:
@@ -62,8 +63,11 @@ def test_readme_example_counts_are_internally_consistent():
     dropped = int(DROPPED_RE.search(output).group("dropped"))
     scanned = int(SCANNED_RE.search(output).group("scanned"))
     not_scanned = int(NOT_SCANNED_RE.search(output).group("not_scanned"))
-    assert dropped + scanned + not_scanned == excluded, (
-        f"{dropped} dropped + {scanned} scanned + {not_scanned} not scanned != {excluded} excluded"
+    no_excerpt_match = NO_EXCERPT_RE.search(output)
+    no_excerpt = int(no_excerpt_match.group("no_excerpt")) if no_excerpt_match else 0
+    assert dropped + no_excerpt + scanned + not_scanned == excluded, (
+        f"{dropped} dropped + {no_excerpt} no excerpt + {scanned} scanned + "
+        f"{not_scanned} not scanned != {excluded} excluded"
     )
 
 

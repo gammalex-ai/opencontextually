@@ -10,7 +10,9 @@ Two pieces:
 
 - **[`answer-keys.json`](answer-keys.json)** — for each repository and
   task, the files that genuinely implement or test the behaviour, read out
-  of the project at a pinned commit. This is the benchmark. The rest is
+  of the project at a pinned commit. A key may also carry `task_variants`
+  (`technical` and `natural` wording) that reuse those exact files rather
+  than creating a second truth set. This is the benchmark. The rest is
   plumbing.
 - **[`dogfood.py`](dogfood.py)** — runs the corpus, and separately checks
   determinism and sweeps for anything secret-shaped surviving into a
@@ -63,6 +65,16 @@ $EDITOR benchmarks/corpus.local.json          # already gitignored
 python benchmarks/dogfood.py benchmarks/corpus.local.json
 ```
 
+The default `--phrasing existing` run preserves the historical task strings
+and remains directly comparable with earlier results. To expose vocabulary
+sensitivity against the same answer keys:
+
+```
+python benchmarks/dogfood.py benchmarks/corpus.local.json --phrasing technical
+python benchmarks/dogfood.py benchmarks/corpus.local.json --phrasing natural
+python benchmarks/dogfood.py benchmarks/corpus.local.json --phrasing all
+```
+
 `fetch-corpus.sh` clones the fourteen public repositories the README's
 answer-key figures were measured against, each pinned to the exact commit
 they were measured at (a timed subset of ten also appears in the README's
@@ -80,9 +92,10 @@ per case.
 
 ## What it reports, and what to look for
 
-Per case: latency, included/excluded counts, the top results with reasons,
-which checks fired, whether two runs are byte-identical, and whether anything
-secret-shaped survived redaction into the serialized package.
+Per case: latency, included/excluded counts, answer-key files found in the
+package and top eight, the top results with reasons, which checks fired,
+whether two runs are byte-identical, and whether anything secret-shaped
+survived redaction into the serialized package.
 
 The script exits non-zero on the two outcomes that are never acceptable — a
 secret-shaped string in the package, or a non-deterministic result. Everything

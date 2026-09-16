@@ -28,7 +28,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-232 tests, sub-second locally. To also exercise the MCP server module,
+274 tests, typically under two seconds locally. To also exercise the MCP server module,
 install the `mcp` extra first:
 
 ```

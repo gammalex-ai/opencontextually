@@ -387,6 +387,13 @@ MAX_EXPANDED = 8
 # the files worth opening first, not everything that scored above zero.
 MAX_INCLUDED = 18
 
+# Documentation remains a first-class result, but while both documentation
+# and non-documentation candidates are available no prefix of the delivered
+# package may be more than two-thirds documentation. This is a delivery rule,
+# not a score adjustment: every promoted source/test/config candidate already
+# cleared the normal relevance bar, and docs-only repositories are unchanged.
+MAX_DOC_PREFIX_SHARE = 2 / 3
+
 # --- bounded excerpt extraction + redaction (step 6) ---
 # Excerpts are the spans that justified an item's inclusion, not whole
 # files: matched symbol definitions, matched config/doc/content lines, and
@@ -606,6 +613,19 @@ STOPWORDS = {
     "where", "who", "which", "whom", "whose", "using", "even", "though",
     "although", "itself", "himself", "herself", "themselves", "yourself",
     "yourselves", "ourselves",
+    # Deterministic built-in English function words. These express grammar,
+    # quantity, or ordering in a natural-language report but rarely identify
+    # the implementation. Meaningful neighbours remain ("after installers"
+    # still contributes "installers"), while prose-heavy files no longer win
+    # merely by containing ordinary sentence structure.
+    "about", "above", "across", "after", "against", "along", "among", "another",
+    "around", "before", "behind", "below", "beneath", "beside", "between",
+    "beyond", "both", "during", "each", "either", "enough", "every", "few",
+    "fewer", "first", "further", "last", "less", "many", "more", "most",
+    "much", "neither", "never", "next", "one", "only", "other", "others", "own",
+    "same", "several", "such", "than", "their", "theirs", "them", "they",
+    "through", "throughout", "toward", "towards", "two", "under", "until",
+    "upon", "very", "while", "within", "without",
 }
 
 # --------------------------------------------------------------------------
@@ -928,14 +948,10 @@ def _build_reason(
     if content_term_counts:
         # Strongest content signal: the term mentioned most often.
         term = max(content_term_counts, key=lambda t: content_term_counts[t])
-        if role == "docs":
-            return f"defines {term} requirements"
-        if role == "config":
-            return f"configuration referenced by {term} code"
-        if role == "test":
-            return "tests for affected functionality"
-        if role == "source":
-            return f"references {term}"
+        # A lexical occurrence establishes only a mention. File role cannot
+        # strengthen that evidence into a definition, reference, or test
+        # relationship; those verbs are reserved for symbols and verified
+        # import/call edges elsewhere in the selector.
         return f"mentions {term}"
 
     return "matches task terms"
@@ -2176,6 +2192,54 @@ def score_file(
     return score
 
 
+def _diversify_delivery(items: list[ContextItem], limit: int) -> list[ContextItem]:
+    """Bound a ranked candidate list without allowing documentation monopoly.
+
+    The input is already deterministically score-sorted. While both role
+    groups remain, every third slot is reserved for the best available
+    non-doc candidate. If either group runs out, the remaining slots are
+    filled normally. This preserves documentation-only repositories, keeps
+    strongly relevant docs at the front, and never admits a candidate that
+    did not already pass SELECT/FOLLOW.
+    """
+    remaining = list(items)
+    delivered: list[ContextItem] = []
+    doc_count = 0
+
+    while remaining and len(delivered) < limit:
+        position = len(delivered) + 1
+        allowed_docs = math.ceil(position * MAX_DOC_PREFIX_SHARE)
+        chosen_index = 0
+
+        if remaining[0].role == "docs" and doc_count >= allowed_docs:
+            non_doc_index = next(
+                (
+                    index
+                    for index, item in enumerate(remaining)
+                    if item.role in {"source", "test"}
+                ),
+                None,
+            )
+            if non_doc_index is None:
+                non_doc_index = next(
+                    (
+                        index
+                        for index, item in enumerate(remaining)
+                        if item.role != "docs"
+                    ),
+                    None,
+                )
+            if non_doc_index is not None:
+                chosen_index = non_doc_index
+
+        chosen = remaining.pop(chosen_index)
+        delivered.append(chosen)
+        if chosen.role == "docs":
+            doc_count += 1
+
+    return delivered
+
+
 def select(
     discovered: list[DiscoveredFile], task: str, cache: RunCache | None = None
 ) -> tuple[list[ContextItem], dict[str, int], dict]:
@@ -2328,7 +2392,7 @@ def select(
     combined = seed_items + expanded_items
     combined.sort(key=lambda item: (-item.score, item.path))
 
-    final_items = combined[:MAX_INCLUDED]
+    final_items = _diversify_delivery(combined, MAX_INCLUDED)
 
     # --- bug fix: exclusion buckets double-counted ----------------------
     #
