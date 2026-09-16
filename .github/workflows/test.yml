@@ -32,3 +32,66 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest
+
+  # An editable install (the `test` job above) reads from the source
+  # checkout directly, so it cannot catch a packaging defect: a file
+  # missing from MANIFEST.in, a stray __pycache__/.pyc dragged into a
+  # `graft`-ed directory, a console script that isn't actually wired up.
+  # v0.2.4's published sdist shipped tests/ without the benchmarks/ module
+  # those tests import, and that escaped entirely because nothing ever
+  # built or ran the *artifact* -- only the source tree. This job builds
+  # both artifacts on every PR and clean-installs each one into its own
+  # fresh virtualenv, so that class of defect fails here instead of after
+  # a release is already on PyPI.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+
+      - name: Inspect archives for forbidden files
+        run: |
+          set -eu
+          for archive in dist/*.tar.gz dist/*.whl; do
+            echo "== $archive =="
+            if [ "${archive##*.}" = "gz" ]; then
+              listing="$(tar tzf "$archive")"
+            else
+              listing="$(python -m zipfile -l "$archive" | awk '{print $1}')"
+            fi
+            echo "$listing" | grep -E '__pycache__|\.pyc$|\.DS_Store$|corpus\.local\.json$' && {
+              echo "forbidden file(s) found in $archive" >&2
+              exit 1
+            } || true
+          done
+
+      - name: Clean-install the wheel and exercise every console script
+        run: |
+          set -eu
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install --force-reinstall "dist/$(basename dist/*.whl)[mcp]"
+          # gammx/gctx/octx/opencontextually all support --version.
+          # opencontextually-mcp has no --version flag and immediately
+          # starts a stdio server on invocation, so it is exercised by
+          # importing its module (requires the `mcp` extra, installed
+          # above) rather than running it, to avoid hanging the job.
+          for script in gammx gctx octx opencontextually; do
+            /tmp/wheel-venv/bin/"$script" --version
+          done
+          /tmp/wheel-venv/bin/python -c "import opencontextually.mcp"
+
+      - name: Extract, install, and test the sdist
+        run: |
+          set -eu
+          mkdir -p /tmp/sdist-extract
+          tar xzf dist/*.tar.gz -C /tmp/sdist-extract
+          cd /tmp/sdist-extract/*/
+          python -m venv /tmp/sdist-venv
+          /tmp/sdist-venv/bin/pip install ".[dev]"
+          /tmp/sdist-venv/bin/pytest

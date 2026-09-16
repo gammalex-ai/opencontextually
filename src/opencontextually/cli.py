@@ -112,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if not args.task.strip():
+        print("error: task must be a non-empty string", file=sys.stderr)
+        return 2
+
     package = get_context(args.task, root=root)
     if args.json:
         # --json is the machine path: always full-fidelity, byte-identical

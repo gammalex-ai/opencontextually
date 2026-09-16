@@ -261,24 +261,47 @@ leaked secrets).
 
 Fourteen repositories, each with a hand-checked answer key
 ([`benchmarks/answer-keys.json`](benchmarks/answer-keys.json)): the files
-that actually implement or test the behaviour the task names. Six were used
-while tuning ranking. Eight were held out — keys written and committed
-**before** the tool ran against them, nothing tuned afterward.
+that actually implement or test the behaviour the task names, grouped into
+three cohorts by how they were used.
 
-| Group | Repositories | Key files found | In the default view |
+| Cohort | Repositories | Key files found | In the default view |
 | --- | --- | ---: | ---: |
-| Tuned | httpx, requests, flask, click, sqlfluff, django | 18/19 (95%) | 16/19 (84%) |
-| Held out | black, rich, pydantic, fastapi, attrs, urllib3, pytest, scrapy | 22/29 (76%) | 19/29 (66%) |
+| Development | httpx, requests, flask, click, sqlfluff, django | 18/19 (95%) | 16/19 (84%) |
+| Regression | black, rich, pydantic, fastapi | 11/16 (69%) | 9/16 (56%) |
+| Regression 2 | attrs, urllib3, pytest, scrapy | 11/13 (85%) | 10/13 (77%) |
 | **All fourteen** | | **40/48 (83%)** | **35/48 (73%)** |
 
-**76% and 66%** — the held-out figures — are the ones to argue with: they
-predict a repository this project has never seen, and the default view
-(compact output shows eight files) matters more than the total.
+**Development** repositories were used while tuning ranking constants
+(`RELATIONSHIP_BONUS`, `HISTORY_DOC_PENALTY`, `DISCOVERY_LIMIT`); results on
+them are fitted to some unknown degree. **Regression** and **Regression 2**
+were both written and committed before the tool ever ran against those
+repositories on these tasks — but neither is evidence that this project
+generalizes to a repository it has never seen, because both have since
+informed a ranking decision: Regression's result drove a fix (below), and
+Regression 2 was run specifically to check whether that fix generalized,
+which is also how a decision to revert part of it got made. Both cohorts are
+now spent as evidence — useful for catching a *future* ranking change that
+regresses a score nothing was tuned against *for that change*, not as proof
+of unseen-repository accuracy. A third cohort, genuinely untouched by any
+ranking decision, is intended before the next round of ranking work; until
+it exists, quote all three numbers above separately, never combined into a
+single "held-out" figure. `benchmarks/dogfood.py`'s own report breaks the
+numbers down the same way, rather than only in this table.
 
 Across all fourteen: **zero** fixture, vendor, generated or CI files
 selected, and **0.05%–2.1%** of repository bytes delivered.
 
-What the held-out repos caught that tuning missed:
+The table above is **file** recall: whether a path from the answer key
+appears anywhere in the package, not whether the specific excerpt delivered
+for it contains the relevant code. Those can diverge — on fastapi, the
+benchmark counted `fastapi/routing.py` and
+`fastapi/dependencies/utils.py` as recovered while their excerpts were an
+unrelated stub and a helper with no override logic in it, respectively.
+`benchmarks/answer-keys.json` can now carry `anchors` (required substrings
+per file) to score this directly; `dogfood.py` reports it as excerpt-hit
+recall, separate from file recall, wherever a key declares one.
+
+What the regression repos caught that development tuning missed:
 
 - **A bundled previous major version.** pydantic ships Pydantic 1 inside
   Pydantic 2 — six of eighteen slots went to `pydantic/v1/*`. **Fixed.**

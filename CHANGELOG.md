@@ -6,12 +6,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-09-16
+
+### Fixed
+
+- **The published sdist could not run its own tests.** `tests/` was grafted
+  into the source distribution without `benchmarks/`, which
+  `tests/test_contextbench_phrasing.py` imports — `pip download` + `pytest`
+  against the real v0.2.4 sdist failed at collection. `MANIFEST.in` now
+  grafts `benchmarks/` too (excluding the gitignored, personal
+  `corpus.local.json`), and CI builds both artifacts on every PR, cleanly
+  installs each into its own virtualenv, and runs the sdist's own tests —
+  not just an editable install of the source tree.
+- **A source build could ship `__pycache__`/`.pyc` cruft.** `graft` pulls in
+  everything on disk under a directory, gitignored or not; a build run
+  against a workspace that had ever been imported grew the sdist from
+  172 KB to 384 KB this way. `MANIFEST.in` now globally excludes
+  `__pycache__`, `*.py[cod]`, and `.DS_Store`, and CI inspects both built
+  archives for them.
+- **Invalid `root`/empty `task` silently looked like an empty project.**
+  `get_context()` resolved any `root` string and ran on it regardless, so a
+  typo'd path or a non-directory returned a normal-looking, empty
+  `ContextPackage` instead of an error — for the Python API and MCP; the
+  CLI already checked `--root` itself. `get_context()` now raises
+  `ValueError` for an empty/whitespace task and `NotADirectoryError` for a
+  bad root; the CLI translates both into its existing error message and
+  exit code, and MCP surfaces them as a `ToolError` via FastMCP.
+
 ### Changed
 
 - **The primary CLI command is now `gammx`.** Documentation, examples, issue
   templates, and release verification use `gammx`. The former `gctx` command,
   along with `octx` and `opencontextually`, remains installed as a
   backwards-compatible alias so existing scripts continue to work.
+- **ContextBench (`benchmarks/dogfood.py`) can now validate a run, not just
+  report it.** A run with zero cases (e.g. every configured repository
+  missing) now exits non-zero instead of silently reporting success. A new
+  `--strict` flag additionally requires every configured repository to be
+  on disk, every configured task to have exactly one matching answer key,
+  every checkout's `HEAD` to match the corpus config's pinned `commit`, and
+  every answer-key file to actually exist. `--min-recall`,
+  `--min-top8-recall`, and `--min-excerpt-recall` add explicit regression
+  thresholds. Answer keys are now schema-checked and rejected on a
+  duplicate `(repo, task)` entry.
+- **ContextBench can score excerpt content, not just filenames.** File
+  recall only asked whether a path appeared anywhere in the package; on
+  fastapi this counted `routing.py` and `dependencies/utils.py` as
+  recovered while their actual delivered excerpts were an unrelated stub
+  and a helper with no override logic. An answer key can now declare
+  `anchors` (required substrings per file); `dogfood.py` reports
+  excerpt-hit recall for those files separately from file recall.
+- **The README's "held out" framing overstated what it measures.**
+  `answer-keys.json`'s `group` values are renamed `tuned` → `development`,
+  `held_out` → `regression`, `held_out_2` → `regression_2`. Both regression
+  cohorts have since informed a ranking decision (one exposed a failure
+  class that drove a fix, the other was run to check whether that fix
+  generalized), so their combined score is regression-tracking evidence,
+  not a demonstrated prediction of unseen-repository accuracy. The README
+  and `benchmarks/README.md` now report all three cohorts separately
+  rather than combining two of them into a single "held out" figure, and
+  `dogfood.py`'s own report breaks results down the same way.
+
+### Added
+
+- A strict-xfail regression test (`tests/test_false_gap_black.py`)
+  documenting a known `test_reference_gap` false positive: a gated call
+  into a symbol from a transitively-included, task-unrelated utility file
+  can corroborate a finding with no connection to the task (observed on
+  black's corpus). A lexical task-term-overlap filter was tried and
+  reverted — it also silences the legitimate `is_session_expired` finding
+  in the auth-bug demo, which has the identical structural shape.
 
 ## [0.2.4] - 2026-09-15
 

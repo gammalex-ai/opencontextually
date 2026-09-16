@@ -1,7 +1,25 @@
 # The sdist ships tests/, and those tests read examples/auth_bug -- the
-# fixture behind the README's worked example. Without this, `pip download`
-# + `pytest` (what a distribution packager actually does) fails 22 tests on
-# a missing directory rather than on anything real.
+# fixture behind the README's worked example -- and import
+# benchmarks/dogfood.py (tests/test_contextbench_phrasing.py). Without
+# these, `pip download` + `pytest` (what a distribution packager actually
+# does) fails tests on a missing directory/module rather than on anything
+# real.
 graft examples
 graft tests
+graft benchmarks
 include CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
+
+# corpus.local.json is gitignored and personal -- repository paths on
+# whoever's disk built the package, sometimes pointing at private clones.
+# `graft` pulls in everything on disk under benchmarks/, gitignore or not,
+# so without this a maintainer who has ever run the benchmark locally
+# would ship their own local paths in the next sdist.
+exclude benchmarks/corpus.local.json
+
+# `graft` pulls in everything on disk under these directories, not just
+# what git tracks -- so a build run against a workspace that has ever been
+# imported or debugged (__pycache__, .pyc, .DS_Store) ships that cruft in
+# the sdist too. Observed for real: a local build grew from 172 KB to
+# 384 KB this way. Global excludes so the archive matches a clean checkout
+# regardless of the workspace it was built from.
+global-exclude __pycache__ *.py[cod] .DS_Store
