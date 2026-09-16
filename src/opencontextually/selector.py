@@ -114,7 +114,7 @@ TEST_SIGNAL_DAMPING = 0.1
 # to large *data* files -----------------------------------------------
 # The original LARGE_FILE_CONTENT_PENALTY applied to every file over
 # LARGE_FILE_BYTES regardless of what the file actually was. That is
-# backwards for a code tool: on this very repo, `octx "the redaction masks
+# backwards for a code tool: on this very repo, `gammx "the redaction masks
 # ordinary code"` omitted selector.py (85,609 bytes -- the module that
 # *implements* redact_text/_redact_line/_looks_like_secret_key) while
 # keeping three smaller files that merely *describe* redaction, purely
@@ -2437,7 +2437,7 @@ def select(
 #
 # Two conditions, both required:
 #
-# 1. Multi-term only. A single-term task (`octx "applications"`) has
+# 1. Multi-term only. A single-term task (`gammx "applications"`) has
 #    coverage_ratio == 1.0 for any file that matches at all -- "only one
 #    *strong* term matched" is true of every single-term task by
 #    construction, so the warning would be meaningless noise there.
@@ -2490,7 +2490,7 @@ WEAK_CONTENT_RARE_COUNT = 5
 # term with a meaningful-but-not-overwhelming presence -- a real, if
 # imperfect, content signal -- is a genuine one.
 #
-# Observed on OpenContextually's own repo: `octx "what's wrong, in plain
+# Observed on OpenContextually's own repo: `gammx "what's wrong, in plain
 # English"` tokenizes to ["plain", "english"]. "plain" has fname_count 0
 # and appears in the content of 13 of 64 discovered files (~20%) --
 # clearly not "rare" under WEAK_CONTENT_RARE_COUNT, so the old rule

@@ -1,6 +1,6 @@
 """Regression tests for four defects found evaluating OpenContextually
 against a real Next.js/TypeScript repo (no LLM/auth/session code at all),
-where `octx "fix the user login and session handling"` ranked a minified
+where `gammx "fix the user login and session handling"` ranked a minified
 SVG and a marketing bio as the #1 and #2 results instead of reporting no
 relevant context.
 

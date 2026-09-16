@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **The primary CLI command is now `gammx`.** Documentation, examples, issue
+  templates, and release verification use `gammx`. The former `gctx` command,
+  along with `octx` and `opencontextually`, remains installed as a
+  backwards-compatible alias so existing scripts continue to work.
+
 ## [0.2.4] - 2026-09-15
 
 ### Fixed

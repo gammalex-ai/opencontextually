@@ -33,7 +33,7 @@ That’s why we built OpenContextually, an open-source context layer for coding 
 Give it a task:
 
 ```bash
-gctx "fix the authentication bug"
+gammx "fix the authentication bug"
 ```
 
 It scans your repository, follows the relationships a keyword search would
@@ -73,7 +73,7 @@ matters.
 ```bash
 pip install opencontextually
 
-gctx "fix the authentication bug"
+gammx "fix the authentication bug"
 ```
 
 **No model. No API key. No network. No database. No setup.** One dependency.
@@ -82,7 +82,7 @@ The same repository and task produce byte-identical output every time.
 ## What it looks like
 
 ```
-gctx "dependency override not applied in nested routers"
+gammx "dependency override not applied in nested routers"
 ```
 
 Run from a clone of [fastapi/fastapi](https://github.com/fastapi/fastapi) at
@@ -128,18 +128,18 @@ git clone https://github.com/fastapi/fastapi.git && cd fastapi
 python -m venv .venv && source .venv/bin/activate   # fish: activate.fish
 pip install opencontextually
 
-gctx "dependency override not applied in nested routers"   # ~2s
+gammx "dependency override not applied in nested routers"   # ~2s
 ```
 
-Flask clones the same way — `gctx "session cookie is not set on redirect"`
+Flask clones the same way — `gammx "session cookie is not set on redirect"`
 — in about 0.2s. No model, no API key, no network call; your code never
 leaves your machine. Add `-v` to see the excerpt behind each match.
 
 Already have a project open? Skip the clone:
 
 ```bash
-gctx "where does authentication actually happen?"
-gctx "what will break if I change the User model?"
+gammx "where does authentication actually happen?"
+gammx "what will break if I change the User model?"
 ```
 
 Give it something you're actually working on — you'll know in seconds
@@ -200,16 +200,16 @@ pip install -e ".[dev]"
 
 | Command | What you get |
 | --- | --- |
-| `gctx "task"` | Ranked files, each with a reason |
-| `gctx "task" -v` | Adds the code excerpt that justified each file |
-| `gctx "task" --all` | Every included file, not just the top slice |
-| `gctx "task" --json` | Full machine representation, for handing to an agent |
-| `gctx "task" --root PATH` | Search somewhere other than the current directory |
+| `gammx "task"` | Ranked files, each with a reason |
+| `gammx "task" -v` | Adds the code excerpt that justified each file |
+| `gammx "task" --all` | Every included file, not just the top slice |
+| `gammx "task" --json` | Full machine representation, for handing to an agent |
+| `gammx "task" --root PATH` | Search somewhere other than the current directory |
 
-`gctx` is short for *GammaLex Context*. The same command is also installed
-as `octx` (the original name, kept working) and `opencontextually`. Flags
-compose (`-v --all`); `--json` is unaffected by either and is always full
-fidelity.
+`gammx` is the short command for *GammaLex Context*. The same command is also
+installed as `gctx` and `octx` (older names kept working) and
+`opencontextually`. Flags compose (`-v --all`); `--json` is unaffected by
+either and is always full fidelity.
 
 Write tasks the way you'd describe the bug. Naming a specific behavior or
 symbol beats a directory-shaped noun.
@@ -247,7 +247,7 @@ Point your MCP client at the `opencontextually-mcp` command:
 ```
 
 It exposes exactly one tool — `get_context(task, root=".")` — returning the
-same shape as `gctx --json`.
+same shape as `gammx --json`.
 
 ## Tested on real repositories
 
@@ -324,7 +324,7 @@ here is aspirational.
 
 | Surface | What it is | Status |
 | --- | --- | --- |
-| **`gctx` CLI** | `gctx "task"`, plus `--json`, `-v`, `--all`, `--root` | Supported |
+| **`gammx` CLI** | `gammx "task"`, plus `--json`, `-v`, `--all`, `--root` | Supported |
 | **Python API** | `get_context(task, root=".")` returning a `ContextPackage` | Supported |
 | **MCP server** | `opencontextually-mcp`, stdio, one tool: `get_context(task, root)` | Supported — see [MCP](#mcp) |
 | **Any MCP-speaking client** | Anything that can launch a stdio MCP server and call one tool | Should work; only the server is tested |
@@ -391,7 +391,7 @@ telling us it works — it's finding where it doesn't.
 
 ```bash
 pip install opencontextually
-gctx "the bug you're currently fighting"
+gammx "the bug you're currently fighting"
 ```
 
 **Bad result?** [Bring us the context failure](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
@@ -418,7 +418,7 @@ Give your agent better context before it starts working.
 
 ```bash
 pip install opencontextually
-gctx "fix the bug"
+gammx "fix the bug"
 ```
 
 ⭐ [Star OpenContextually](https://github.com/gammalex-ai/opencontextually) · Built by [GammaLex AI](https://github.com/gammalex-ai)

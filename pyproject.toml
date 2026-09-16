@@ -46,10 +46,10 @@ mcp = [
 ]
 
 [project.scripts]
-# `gctx` (GammaLex Context) is the primary command. `octx` is kept as a
-# backwards-compatible alias for anyone who installed before the rename --
-# removing it would break existing scripts for no benefit. `opencontextually`
-# remains the spelled-out form. All three are the same entry point.
+# `gammx` is the primary command. `gctx` and `octx` are kept as
+# backwards-compatible aliases for existing scripts, and `opencontextually`
+# remains the spelled-out form. All four are the same entry point.
+gammx = "opencontextually.cli:main"
 gctx = "opencontextually.cli:main"
 octx = "opencontextually.cli:main"
 opencontextually = "opencontextually.cli:main"

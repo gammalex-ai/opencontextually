@@ -11,7 +11,7 @@ coding agents *consume* OpenContextually -- it is not a second product
 surface. No `list_files`, `search`, `explain`, or other convenience tools:
 an agent that wants more than get_context() already has its own file
 tools. The tool's output is `ContextPackage.to_dict()` -- the same
-serializer `octx --json` uses -- so there is exactly one formatting path
+serializer `gammx --json` uses -- so there is exactly one formatting path
 in the whole codebase (see context.py's module docstring); this module
 does not reformat or add a second one.
 """
@@ -41,7 +41,7 @@ def get_context(task: str, root: str = ".") -> dict[str, Any]:
 
     This is the hero API (`opencontextually.get_context`) exposed as an
     MCP tool. The return value is exactly `package.to_dict()` -- identical
-    in shape to `octx --json` -- so a caller gets the same structured
+    in shape to `gammx --json` -- so a caller gets the same structured
     data (included files with reasons/provenance/excerpts, conflicts,
     missing, exclusion counts, trace) regardless of whether it reaches
     OpenContextually via the CLI, the Python API, or MCP.

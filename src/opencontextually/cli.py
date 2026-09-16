@@ -1,4 +1,4 @@
-"""CLI entry point for the `gctx`, `octx`, and `opencontextually` console scripts.
+"""CLI entry point for the `gammx` command and its compatibility aliases.
 
 No subcommands: one positional task, one --root flag, plain-text output via
 ContextPackage.render() -- the only rendering path in the codebase.
@@ -17,7 +17,7 @@ from . import __version__, get_context
 # --- bug fix: "-json" (single dash) produced a bare, unhelpful argparse
 # error -------------------------------------------------------------------
 #
-# `octx "task" -json` is a natural typo (many CLIs accept a single dash for
+# `gammx "task" -json` is a natural typo (many CLIs accept a single dash for
 # long options), but argparse rejects it as an "unrecognized arguments"
 # token with no indication of what to do instead. The fix does not
 # silently accept the single-dash form -- `-json` is not `--json` and
@@ -48,16 +48,16 @@ class _FriendlyArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
-# The command is installed under three names (see pyproject.toml): `gctx`,
-# the alias `octx`, and the spelled-out `opencontextually`. Usage text and
-# error messages should name whichever one the user actually typed, so this
-# reads argv[0] rather than hardcoding a single spelling -- telling someone
-# who ran `octx` to fix their `gctx` invocation would be its own small lie.
+# The command is installed under four names (see pyproject.toml): `gammx`,
+# compatibility aliases `gctx` and `octx`, and the spelled-out
+# `opencontextually`. Usage text and error messages should name whichever one
+# the user actually typed, so this reads argv[0] rather than hardcoding a
+# single spelling.
 # argparse's own default does the same thing, but falls down for `python -m
 # opencontextually.cli`, where argv[0] is a path ending in "cli.py"; those
 # module-style invocations fall back to the primary name.
 _MODULE_INVOCATION_NAMES = {"cli.py", "__main__.py", "-c", ""}
-DEFAULT_PROG = "gctx"
+DEFAULT_PROG = "gammx"
 
 
 def _invoked_as() -> str:

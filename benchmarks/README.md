@@ -2,7 +2,7 @@
 
 The benchmark behind every selection-quality number in the README.
 
-It asks one question: **does `gctx` select the files a developer would
+It asks one question: **does `gammx` select the files a developer would
 actually need for a task, and leave out the rest?** Not how fast it walks a
 repository — whether the context it hands an agent is the right context.
 

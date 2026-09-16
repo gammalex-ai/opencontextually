@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        ContextBench measures one thing: does `gctx` select the files a
+        ContextBench measures one thing: does `gammx` select the files a
         developer would actually need, and leave out the rest.
 
         The valuable part of a case is the **answer key** — the files
@@ -62,9 +62,9 @@ body:
   - type: textarea
     id: result
     attributes:
-      label: What gctx returns today
+      label: What gammx returns today
       description: |
-        Run `gctx "<task>" --root <clone>` at that commit and paste the
+        Run `gammx "<task>" --root <clone>` at that commit and paste the
         output. A case where it does well is as useful as one where it
         fails — the first becomes a regression guard, the second becomes a
         bug.

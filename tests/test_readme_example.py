@@ -1,6 +1,6 @@
 """The README's flagship example must stay internally consistent.
 
-The "What it looks like" section shows real `gctx` output from a clone of
+The "What it looks like" section shows real `gammx` output from a clone of
 fastapi/fastapi at a pinned commit, presented as "the real, unedited
 output". Earlier this was a local fixture under `examples/auth_bug/`, and a
 test regenerated that render and compared it against the README verbatim --

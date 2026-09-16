@@ -1,7 +1,7 @@
 ## What this changes
 
 <!-- One or two sentences. What problem does this solve for someone running
-     `gctx` on their own repository? -->
+     `gammx` on their own repository? -->
 
 ## Why
 

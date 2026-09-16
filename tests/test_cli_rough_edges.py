@@ -1,6 +1,6 @@
 """Tests for the three "rough edges" fixed together:
 
-  - `octx "task" -json` (single dash) used to produce a bare, unhelpful
+  - `gammx "task" -json` (single dash) used to produce a bare, unhelpful
     argparse error with no indication of what to do instead. It must
     still be rejected (never silently accepted as `--json`), but with a
     hint suggesting the correct flag.
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from opencontextually import __version__
-from opencontextually.cli import main
+from opencontextually.cli import DEFAULT_PROG, main
 from opencontextually.context import ContextItem, ContextPackage, _AsciiGlyphs, _UnicodeGlyphs
 
 FIXTURE_ROOT = Path(__file__).parent.parent / "examples" / "auth_bug"
@@ -45,6 +45,17 @@ def test_version_flag_does_not_require_a_task():
     # positional `task` is enforced.
     result = _run("--version")
     assert "the following arguments are required" not in result.stderr
+
+
+def test_module_invocation_uses_gammx_as_the_primary_name():
+    assert DEFAULT_PROG == "gammx"
+
+
+def test_gammx_is_installed_with_legacy_cli_aliases():
+    pyproject = (FIXTURE_ROOT.parent.parent / "pyproject.toml").read_text()
+    expected_entry_point = "opencontextually.cli:main"
+    for command in ("gammx", "gctx", "octx", "opencontextually"):
+        assert f'{command} = "{expected_entry_point}"' in pyproject
 
 
 # --- -json (single dash) friendly hint ----------------------------------
