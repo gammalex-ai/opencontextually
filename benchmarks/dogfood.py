@@ -52,6 +52,7 @@ SECRET_SHAPES = re.compile(
 )
 
 TOP_N = 8
+DEFAULT_ANSWER_KEYS = Path(__file__).with_name("answer-keys.json")
 
 
 def _fingerprint(package) -> str:
@@ -60,7 +61,49 @@ def _fingerprint(package) -> str:
     ).hexdigest()[:16]
 
 
-def run_case(root: str, task: str, *, check_determinism: bool = True) -> dict:
+def load_answer_keys(path: Path = DEFAULT_ANSWER_KEYS) -> dict[tuple[str, str], dict]:
+    """Index canonical benchmark tasks without duplicating their truth sets."""
+    data = json.loads(path.read_text())
+    return {(entry["repo"], entry["task"]): entry for entry in data.get("keys", [])}
+
+
+def iter_task_phrasings(
+    repo_name: str,
+    tasks: list[str],
+    answer_keys: dict[tuple[str, str], dict],
+    phrasing: str,
+):
+    """Yield (task text, phrasing label, shared answer-key entry).
+
+    The canonical ``task`` remains the existing comparable series. Alternate
+    wording lives on that same entry under ``task_variants`` so phrasing can
+    never accidentally acquire a different ground truth.
+    """
+    for canonical_task in tasks:
+        answer_key = answer_keys.get((repo_name, canonical_task))
+        if phrasing in ("existing", "all"):
+            yield canonical_task, "existing", answer_key
+        if answer_key is None:
+            continue
+        variants = answer_key.get("task_variants", {})
+        if phrasing == "all":
+            requested = variants
+        elif phrasing in variants:
+            requested = {phrasing: variants[phrasing]}
+        else:
+            requested = {}
+        for label, task in requested.items():
+            yield task, label, answer_key
+
+
+def run_case(
+    root: str,
+    task: str,
+    *,
+    check_determinism: bool = True,
+    phrasing: str = "existing",
+    answer_key: dict | None = None,
+) -> dict:
     started = time.perf_counter()
     package = get_context(task, root=root)
     elapsed = time.perf_counter() - started
@@ -73,9 +116,15 @@ def run_case(root: str, task: str, *, check_determinism: bool = True) -> dict:
     if check_determinism:
         deterministic = _fingerprint(get_context(task, root=root)) == fingerprint
 
+    included_paths = [item.path for item in package.included]
+    expected_paths = list(answer_key.get("files", {})) if answer_key else []
+    found_paths = [path for path in expected_paths if path in included_paths]
+    visible_found_paths = [path for path in expected_paths if path in included_paths[:TOP_N]]
+
     return {
         "root": root,
         "task": task,
+        "phrasing": phrasing,
         "seconds": elapsed,
         "included": len(package.included),
         "excluded": package.excluded_count,
@@ -89,6 +138,10 @@ def run_case(root: str, task: str, *, check_determinism: bool = True) -> dict:
         "deterministic": deterministic,
         "top": [(i.path, i.reason) for i in package.included[:TOP_N]],
         "package_bytes": len(serialized),
+        "answer_key_total": len(expected_paths),
+        "answer_key_found": len(found_paths),
+        "answer_key_visible_found": len(visible_found_paths),
+        "answer_key_missing": [path for path in expected_paths if path not in included_paths],
     }
 
 
@@ -107,6 +160,12 @@ def print_case(result: dict) -> None:
         f"{result['seconds']:.2f}s  ·  {result['included']} included / "
         f"{result['excluded']} excluded  ·  {result['package_bytes']:,} B  ·  {determinism}"
     )
+    if result["answer_key_total"]:
+        print(
+            f"  answer key ({result['phrasing']}): "
+            f"{result['answer_key_found']}/{result['answer_key_total']} package · "
+            f"{result['answer_key_visible_found']}/{result['answer_key_total']} top {TOP_N}"
+        )
 
     dropped = result["excluded_by_reason"].get("over_cap", 0) + result[
         "excluded_by_reason"
@@ -151,12 +210,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip the second run per case (halves runtime)",
     )
+    parser.add_argument(
+        "--phrasing",
+        choices=("existing", "technical", "natural", "all"),
+        default="existing",
+        help=(
+            "which task wording to run; existing preserves the historical series, "
+            "while technical/natural reuse the same answer key"
+        ),
+    )
+    parser.add_argument(
+        "--answer-keys",
+        default=str(DEFAULT_ANSWER_KEYS),
+        help="answer-key JSON used for recall and shared task variants",
+    )
     args = parser.parse_args(argv)
 
     try:
         config = json.loads(Path(args.config).read_text())
     except (OSError, json.JSONDecodeError) as exc:
         print(f"error: cannot read corpus config {args.config!r}: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        answer_keys = load_answer_keys(Path(args.answer_keys))
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
+        print(f"error: cannot read answer keys {args.answer_keys!r}: {exc}", file=sys.stderr)
         return 2
 
     results = []
@@ -168,8 +247,19 @@ def main(argv: list[str] | None = None) -> int:
             # normal, not an error. Say so rather than failing the run.
             skipped.append(str(root))
             continue
-        for task in entry["tasks"]:
-            results.append(run_case(str(root), task, check_determinism=not args.no_determinism_check))
+        repo_name = entry.get("repo") or entry.get("github", "").rsplit("/", 1)[-1] or root.name
+        for task, phrasing, answer_key in iter_task_phrasings(
+            repo_name, entry["tasks"], answer_keys, args.phrasing
+        ):
+            results.append(
+                run_case(
+                    str(root),
+                    task,
+                    check_determinism=not args.no_determinism_check,
+                    phrasing=phrasing,
+                    answer_key=answer_key,
+                )
+            )
 
     if args.json:
         print(json.dumps(results, indent=2))
@@ -180,6 +270,14 @@ def main(argv: list[str] | None = None) -> int:
         leaks = sum(r["leaks"] for r in results)
         nondet = [r for r in results if r["deterministic"] is False]
         print(f"{len(results)} case(s) · {leaks} secret-shaped string(s) · {len(nondet)} non-deterministic")
+        for phrasing in ("existing", "technical", "natural"):
+            phrased = [r for r in results if r["phrasing"] == phrasing and r["answer_key_total"]]
+            if not phrased:
+                continue
+            found = sum(r["answer_key_found"] for r in phrased)
+            visible = sum(r["answer_key_visible_found"] for r in phrased)
+            total = sum(r["answer_key_total"] for r in phrased)
+            print(f"{phrasing}: {found}/{total} package · {visible}/{total} top {TOP_N}")
         for path in skipped:
             print(f"skipped (not on disk): {path}")
 

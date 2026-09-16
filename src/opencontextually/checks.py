@@ -26,7 +26,7 @@ import re
 
 from .discovery import DiscoveredFile
 from .filecache import RunCache
-from .selector import _looks_like_secret_key, has_word_match
+from .selector import _is_history_document, _looks_like_secret_key, has_word_match
 
 RULE_ID = "configuration_discrepancy"
 RULE_ID_TEST_REFERENCE_GAP = "test_reference_gap"
@@ -283,176 +283,216 @@ def _extract_line_value(line: str) -> tuple[str, float, str, int] | None:
 
 
 # --------------------------------------------------------------------------
-# Bug fix: doc code examples misread as configuration requirements.
+# Structured documentation evidence.
 #
-# A doc line that only *demonstrates* a value -- inside a fenced code block,
-# an rst `.. code-block::`/`.. sourcecode::` directive, an rst `::` literal
-# block, or an inline code span -- is not the docs asserting a requirement.
-# Observed on a real repo (sqlfluff): a `.. code-block:: sql` tutorial
-# showing how to *override* the default `tab_space_size` for a single file
-# ("-- Set a smaller indent for this file") was read as the docs declaring
-# the project-wide default should be 2, producing a false-positive conflict
-# against the real default of 4. The project's own stated bar is that any
-# false-positive configuration_discrepancy is a bug, so doc lines inside a
-# code example are excluded from consideration entirely -- never turned
-# into a doc assertion in the first place. This is a lexical, line-based
-# exclusion (mirroring the rest of this module's lexical approach), not a
-# real Markdown/rst parser: it is deliberately conservative, erring toward
-# excluding a line that might be prose over including one that is actually
-# code.
+# Numbers in narrative prose are not configuration declarations. Documentation
+# participates only through an explicit key/value table or through a supported
+# configuration fence whose nearby prose says it is canonical/default/required
+# configuration. Example and override fences fail closed.
 # --------------------------------------------------------------------------
 
-_FENCE_RE = re.compile(r"^(`{3,}|~{3,})")
-_RST_DIRECTIVE_RE = re.compile(r"^\s*\.\.\s+(code-block|sourcecode)::")
-_INLINE_CODE_SPAN_RE = re.compile(r"`[^`\n]+`")
+_FENCE_OPEN_RE = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})\s*(?P<language>[A-Za-z0-9_.+-]*)")
+
+_CONFIG_FENCE_EXTENSIONS = {
+    "yaml": "yaml",
+    "yml": "yml",
+    "toml": "toml",
+    "ini": "ini",
+    "cfg": "cfg",
+    "json": "json",
+    "env": "env",
+}
+_AUTHORITATIVE_CONFIG_WORDS = {
+    "canonical",
+    "default",
+    "effective",
+    "production",
+    "required",
+}
+_NON_AUTHORITATIVE_CONFIG_WORDS = {
+    "example",
+    "override",
+    "sample",
+    "tutorial",
+}
+_TABLE_KEY_HEADERS = {"config key", "configuration key", "key", "setting"}
+_TABLE_VALUE_HEADERS = {"default", "default value", "required value", "value"}
 
 
-def _indent_of(line: str) -> int:
-    expanded = line.expandtabs(4)
-    return len(expanded) - len(expanded.lstrip(" "))
+def _normalise_structured_key(key: str) -> str:
+    """Return a conservative comparable spelling for a structured key.
 
-
-def _fenced_code_line_mask(lines: list[str]) -> set[int]:
-    """1-indexed line numbers inside a Markdown-style fenced code block
-    (``` or ~~~), including the fence lines themselves. Works for any text
-    file that happens to use fences, not just `.md`.
+    Separators and case are normalised, but hierarchy is preserved. In
+    particular, ``session.timeout_minutes`` does not match a bare
+    ``timeout_minutes``: guessing that relationship recreates the same
+    cross-product false-positive class this rule is designed to avoid.
     """
-    code_lines: set[int] = set()
-    fence_char: str | None = None
-    for idx, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        match = _FENCE_RE.match(stripped)
-        if match:
-            marker = match.group(1)[0]
-            if fence_char is None:
-                fence_char = marker
-                code_lines.add(idx)
-                continue
-            if marker == fence_char:
-                fence_char = None
-                code_lines.add(idx)
-                continue
-        if fence_char is not None:
-            code_lines.add(idx)
-    return code_lines
+    parts = [part for part in re.split(r"[./]+", key.strip().lower()) if part]
+    return ".".join(part.replace("-", "_") for part in parts)
 
 
-def _indented_markdown_block_mask(lines: list[str]) -> set[int]:
-    """1-indexed line numbers of Markdown-style indented (4+ space) code
-    blocks: a non-blank line indented >=4 spaces, immediately preceded by a
-    blank line or another such indented line. A crude approximation of
-    CommonMark's indented-code-block rule -- it does not special-case list
-    items, which means some genuinely-indented list prose is also excluded,
-    an acceptable false negative given this rule's precision-over-recall
-    posture.
+def _structured_assertion(
+    *, path: str, key: str, raw_value: str, line: int
+) -> dict | None:
+    """Build a typed assertion from an explicit key/value relationship."""
+    value = raw_value.strip().strip("\"'")
+    if not value:
+        return None
+
+    unit = _infer_unit_from_key(key.lower())
+    if _NUMERIC_VALUE_RE.fullmatch(value):
+        number = float(value)
+        if unit:
+            return {
+                "path": path,
+                "line": line,
+                "key": _normalise_structured_key(key),
+                "kind": "duration",
+                "normalized": number * _UNIT_SECONDS[unit],
+                "raw": value,
+            }
+        return {
+            "path": path,
+            "line": line,
+            "key": _normalise_structured_key(key),
+            "kind": "number",
+            "normalized": number,
+            "raw": value,
+        }
+
+    extracted = _extract_line_value(value)
+    if extracted is None:
+        return None
+    kind, normalized, raw, _start = extracted
+    return {
+        "path": path,
+        "line": line,
+        "key": _normalise_structured_key(key),
+        "kind": kind,
+        "normalized": normalized,
+        "raw": raw,
+    }
+
+
+def _authoritative_fence_context(lines: list[str], fence_index: int) -> bool:
+    """Require an explicit authority cue immediately before a config fence.
+
+    A fenced block is structured, but it may still be an example or an
+    override. Only blocks introduced as canonical/default/required/effective
+    configuration participate. Ambiguous blocks fail closed.
     """
-    code_lines: set[int] = set()
-    prev_blank_or_code = True
-    for idx, line in enumerate(lines, start=1):
-        stripped = line.strip()
+    preceding: list[str] = []
+    for line in reversed(lines[max(0, fence_index - 3):fence_index]):
+        stripped = line.strip().lower()
         if not stripped:
-            prev_blank_or_code = True
             continue
-        if prev_blank_or_code and _indent_of(line) >= 4:
-            code_lines.add(idx)
-            prev_blank_or_code = True
-        else:
-            prev_blank_or_code = False
-    return code_lines
+        preceding.append(stripped)
+        if len(preceding) == 2:
+            break
+    words = _key_tokens(" ".join(preceding))
+    if words & _NON_AUTHORITATIVE_CONFIG_WORDS:
+        return False
+    return bool(words & _AUTHORITATIVE_CONFIG_WORDS)
 
 
-def _rst_code_line_mask(lines: list[str]) -> set[int]:
-    """1-indexed line numbers inside an rst `.. code-block::`/
-    `.. sourcecode::` directive body, or an rst `::` literal-block body --
-    any block of lines indented deeper than the line that introduced it,
-    running until the indentation returns to (or below) the introducing
-    line's own indentation.
-    """
-    code_lines: set[int] = set()
-    n = len(lines)
-    i = 0
-    while i < n:
-        line = lines[i]
-        stripped = line.strip()
-        is_directive = bool(_RST_DIRECTIVE_RE.match(line))
-        # A paragraph/marker line ending in "::" introduces an rst literal
-        # block (e.g. "Some examples are shown below::", or a bare "::").
-        # Excludes the directive itself, which is handled by is_directive.
-        is_literal_marker = (not is_directive) and stripped.endswith("::")
-
-        if not (is_directive or is_literal_marker):
-            i += 1
+def _collect_fenced_config_assertions(
+    doc_file: DiscoveredFile, lines: list[str]
+) -> list[dict]:
+    assertions: list[dict] = []
+    index = 0
+    while index < len(lines):
+        opening = _FENCE_OPEN_RE.match(lines[index])
+        if not opening:
+            index += 1
             continue
 
-        trigger_indent = _indent_of(line)
-        j = i + 1
-        while j < n and lines[j].strip() == "":
-            j += 1
-        if j < n and _indent_of(lines[j]) > trigger_indent:
-            while j < n:
-                if lines[j].strip() == "":
-                    j += 1
-                    continue
-                if _indent_of(lines[j]) <= trigger_indent:
-                    break
-                code_lines.add(j + 1)
-                j += 1
-        i = j if j > i else i + 1
-    return code_lines
+        fence = opening.group("fence")
+        language = opening.group("language").lower()
+        closing_index = index + 1
+        while closing_index < len(lines):
+            stripped = lines[closing_index].strip()
+            if stripped.startswith(fence[0] * len(fence)):
+                break
+            closing_index += 1
+
+        extension = _CONFIG_FENCE_EXTENSIONS.get(language)
+        if extension and _authoritative_fence_context(lines, index):
+            content = "\n".join(lines[index + 1:closing_index])
+            for key, value, relative_line in _parse_config_entries(
+                f"structured-doc.{extension}", content
+            ):
+                assertion = _structured_assertion(
+                    path=doc_file.path,
+                    key=key,
+                    raw_value=value,
+                    line=index + 1 + relative_line,
+                )
+                if assertion is not None:
+                    assertions.append(assertion)
+
+        index = closing_index + 1
+    return assertions
 
 
-def _doc_code_line_mask(content: str, lines: list[str]) -> set[int]:
-    """Union of every code-context detector above, for one doc file's
-    lines. Extension-agnostic (fences and rst directives are each checked
-    unconditionally) since real-world docs mix conventions.
-    """
-    mask = _fenced_code_line_mask(lines)
-    mask |= _indented_markdown_block_mask(lines)
-    mask |= _rst_code_line_mask(lines)
-    return mask
+def _markdown_cells(line: str) -> list[str]:
+    stripped = line.strip().strip("|")
+    return [cell.strip() for cell in stripped.split("|")]
 
 
-def _in_inline_code_span(line: str, start: int) -> bool:
-    """True if character offset `start` in `line` falls inside a single-
-    backtick inline code span. Inline code is weaker evidence of a genuine
-    requirement than plain prose (it is often used for a config key name
-    or an example value), so a value found only inside one is not treated
-    as a doc assertion.
-    """
-    for match in _INLINE_CODE_SPAN_RE.finditer(line):
-        if match.start() <= start < match.end():
-            return True
-    return False
+def _is_markdown_separator(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+
+def _collect_markdown_table_assertions(
+    doc_file: DiscoveredFile, lines: list[str]
+) -> list[dict]:
+    assertions: list[dict] = []
+    for index in range(len(lines) - 2):
+        headers = [cell.lower() for cell in _markdown_cells(lines[index])]
+        separators = _markdown_cells(lines[index + 1])
+        if len(headers) < 2 or len(headers) != len(separators):
+            continue
+        if not _is_markdown_separator(separators):
+            continue
+
+        key_index = next((i for i, cell in enumerate(headers) if cell in _TABLE_KEY_HEADERS), None)
+        value_index = next((i for i, cell in enumerate(headers) if cell in _TABLE_VALUE_HEADERS), None)
+        if key_index is None or value_index is None:
+            continue
+
+        row_index = index + 2
+        while row_index < len(lines) and "|" in lines[row_index]:
+            cells = _markdown_cells(lines[row_index])
+            if len(cells) != len(headers):
+                break
+            assertion = _structured_assertion(
+                path=doc_file.path,
+                key=cells[key_index].strip("`"),
+                raw_value=cells[value_index].strip("`"),
+                line=row_index + 1,
+            )
+            if assertion is not None:
+                assertions.append(assertion)
+            row_index += 1
+    return assertions
 
 
 def _collect_doc_assertions(doc_files: list[DiscoveredFile], cache: RunCache) -> list[dict]:
+    """Collect only explicit, structured configuration evidence from docs.
+
+    Narrative prose is intentionally ignored, even when it contains every
+    token from a key and a plausible numeric value. Supported evidence is a
+    Markdown table with explicit key/value columns or an authoritatively
+    introduced fenced block in a supported configuration format.
+    """
     assertions: list[dict] = []
     for doc_file in doc_files:
         content = cache.get_content(doc_file)
         if not content:
             continue
         lines = content.splitlines()
-        code_line_mask = _doc_code_line_mask(content, lines)
-        for lineno, line in enumerate(lines, start=1):
-            if lineno in code_line_mask:
-                continue
-            extracted = _extract_line_value(line)
-            if extracted is None:
-                continue
-            kind, normalized, raw, start = extracted
-            if _in_inline_code_span(line, start):
-                continue
-            tokens = _key_tokens(line)
-            assertions.append(
-                {
-                    "path": doc_file.path,
-                    "line": lineno,
-                    "kind": kind,
-                    "normalized": normalized,
-                    "raw": raw,
-                    "tokens": tokens,
-                }
-            )
+        assertions.extend(_collect_fenced_config_assertions(doc_file, lines))
+        assertions.extend(_collect_markdown_table_assertions(doc_file, lines))
     return assertions
 
 
@@ -490,8 +530,9 @@ def find_configuration_discrepancies(
       - only config keys with >=2 meaningful (non-unit) name tokens are
         considered at all -- a single generic token like bare "timeout"
         is never enough to correlate two files;
-      - a doc line is only a candidate match when it contains *every*
-        one of those tokens;
+      - documentation only participates when it establishes an explicit,
+        structured key/value relationship in a supported Markdown table or
+        an authoritatively introduced configuration fence;
       - only numeric scalar values participate (text/boolean scalars are
         not compared);
       - duration units are normalized to seconds so "30 minutes",
@@ -525,7 +566,12 @@ def find_configuration_discrepancies(
     """
     cache = cache if cache is not None else RunCache()
     config_files = [f for f in discovered if f.role == "config"]
-    doc_files = [f for f in discovered if f.role == "docs"]
+    # Release notes and changelogs record historical values, not the current
+    # configuration contract. Even a well-formed key/value table there is
+    # deliberately excluded from discrepancy evidence.
+    doc_files = [
+        f for f in discovered if f.role == "docs" and not _is_history_document(f.path)
+    ]
     if not config_files or not doc_files:
         return []
 
@@ -572,7 +618,7 @@ def find_configuration_discrepancies(
             for assertion in doc_assertions:
                 if assertion["kind"] != config_kind:
                     continue
-                if not core_tokens.issubset(assertion["tokens"]):
+                if _normalise_structured_key(key) != assertion["key"]:
                     continue
                 if math.isclose(config_norm, assertion["normalized"], rel_tol=1e-9, abs_tol=1e-9):
                     continue  # both sides agree -- not a discrepancy

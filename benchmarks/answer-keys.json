@@ -118,6 +118,10 @@
       "repo": "fastapi",
       "group": "held_out",
       "task": "dependency override not applied in nested routers",
+      "task_variants": {
+        "technical": "propagate dependency_overrides_provider through nested APIRouter inclusion",
+        "natural": "the dependency override stops working when one router includes another"
+      },
       "files": {
         "fastapi/routing.py": "direct task match (include_router / dependency_overrides_provider)",
         "fastapi/dependencies/utils.py": "imported dependency (solve_dependencies applies overrides)",

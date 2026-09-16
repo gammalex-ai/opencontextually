@@ -91,23 +91,24 @@ is the real, unedited output:
 
 ```
 dependency override not applied in nested routers
-18 relevant · 3121 excluded
+17 relevant · 3122 excluded
 
-  fastapi/routing.py                             defines _frontend_dependency_endpoint
-  fastapi/applications.py                        references applied
-  tests/test_frontend.py                         defines record_dependency
-  tests/test_dependency_overrides.py             filename matches 'dependency'
-  tests/test_dependency_wrapped.py               filename matches 'dependency'
-  docs/hi/docs/advanced/testing-dependencies.md  defines dependency requirements
-  docs/en/docs/advanced/testing-dependencies.md  defines dependency requirements
-  docs/tr/docs/advanced/testing-dependencies.md  defines dependency requirements
+  fastapi/routing.py             called by applications.py
+  fastapi/applications.py        mentions applied
+  fastapi/param_functions.py     called by oauth2.py
+  fastapi/dependencies/utils.py  called by utils.py
+  tests/test_frontend.py         defines record_dependency
+  fastapi/security/oauth2.py     called by utils.py
+  fastapi/openapi/utils.py       called by applications.py
+  fastapi/exceptions.py          called by utils.py
 
-  +10 more  ·  --all to list  ·  -v for code excerpts
+  +9 more  ·  --all to list  ·  -v for code excerpts
 
-Excluded: 3121 files
-  ⚠ 205 relevant files dropped -- the result list was already full
-  2715 files scanned, not relevant enough
-  201 files not scanned (187 binary, 7 exact duplicate of another file, 7 too large to scan)
+Excluded: 3122 files
+  ⚠ 48 relevant files dropped -- the result list was already full
+  1 relevant file with nothing quotable to show
+  1372 files scanned, not relevant enough
+  1701 files not scanned (187 binary, 1507 exact duplicate of another file, 7 too large to scan)
 
 Checks run: configuration_discrepancy, test_reference_gap
 ```
@@ -267,10 +268,10 @@ while tuning ranking. Eight were held out — keys written and committed
 | Group | Repositories | Key files found | In the default view |
 | --- | --- | ---: | ---: |
 | Tuned | httpx, requests, flask, click, sqlfluff, django | 18/19 (95%) | 16/19 (84%) |
-| Held out | black, rich, pydantic, fastapi, attrs, urllib3, pytest, scrapy | 23/29 (79%) | 19/29 (66%) |
-| **All fourteen** | | **41/48 (85%)** | **35/48 (73%)** |
+| Held out | black, rich, pydantic, fastapi, attrs, urllib3, pytest, scrapy | 22/29 (76%) | 19/29 (66%) |
+| **All fourteen** | | **40/48 (83%)** | **35/48 (73%)** |
 
-**79% and 66%** — the held-out figures — are the ones to argue with: they
+**76% and 66%** — the held-out figures — are the ones to argue with: they
 predict a repository this project has never seen, and the default view
 (compact output shows eight files) matters more than the total.
 

@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.4] - 2026-09-15
+
+### Fixed
+
+- **Narrative numbers in documentation could become configuration conflicts.**
+  `configuration_discrepancy` now requires an explicit structured key/value
+  relationship: a Markdown table with named key/value columns, or a supported
+  configuration fence explicitly introduced as canonical, default, effective,
+  production, or required configuration. Ordinary prose and ambiguous example
+  or override fences fail closed.
+- **Documentation could monopolize a bounded result package.** Delivery now
+  preserves the score order while reserving every third prefix slot for the
+  best independently relevant non-documentation candidate when one exists.
+  Documentation-only repositories and strongly relevant documentation retain
+  the full budget and leading positions.
+- **Reasons claimed stronger evidence than selection established.** A lexical
+  occurrence now says `mentions`; `defines` is reserved for extracted symbols,
+  and import/call verbs remain reserved for verified graph relationships.
+- **Ordinary English function words distorted natural bug-report queries.** A
+  deterministic built-in set removes grammatical and quantity terms while
+  retaining the surrounding domain vocabulary.
+
+### Changed
+
+- ContextBench answer keys can carry technical and natural-language task
+  variants that share one canonical truth set. The runner now reports package
+  and top-eight answer-key recovery per phrasing; the existing task series
+  remains the default for historical comparability.
+
+### Known limitations
+
+- FOLLOW remains Python-only. Non-Python source files benefit from lexical
+  selection and role-aware bounding, but Go, TypeScript, Vue, and shell
+  dependency graphs remain future work.
+
 ## [0.2.3] - 2026-08-31
 
 ### Fixed

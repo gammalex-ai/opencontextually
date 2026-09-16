@@ -3,7 +3,9 @@
 ## Session handling
 
 - Sessions must be invalidated after a period of user inactivity.
-- Session timeout: 30 minutes.
+| Configuration key | Required value |
+| --- | --- |
+| `session.timeout_minutes` | 30 minutes |
 - Logging out must immediately end the session server-side, not just clear
   the client cookie.
 
