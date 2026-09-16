@@ -1,4 +1,4 @@
-"""Tests for `octx --json` (v0.1 step 10).
+"""Tests for `gammx --json`.
 
 `--json` is not a second formatting path -- it is `json.dumps(package.to_dict())`.
 These tests check: the output parses, it round-trips the fixture's key facts

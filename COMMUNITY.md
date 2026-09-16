@@ -26,12 +26,12 @@ conversation first, Discord or Discussions.
 | --- | --- |
 | **#welcome** | Start here. What this project is, and what it deliberately is not. |
 | **#announcements** | Releases, benchmark results, breaking changes. Read-only. |
-| **#gctx-help** | "It picked the wrong files", "how do I scope this to a subdirectory", install trouble. Bring the task string and the repo shape. |
+| **#gammx-help** | "It picked the wrong files", "how do I scope this to a subdirectory", install trouble. Bring the task string and the repo shape. |
 | **#context-engineering** | The open question — what an agent should read before it acts, how to phrase a task, how to prove selection was right. ContextBench cases and answer-key debates live here too. |
-| **#integrations** | Building against `gctx --json` or the MCP server. Interface questions, and coordination so two people don't build the same wrapper. |
+| **#integrations** | Building against `gammx --json` or the MCP server. Interface questions, and coordination so two people don't build the same wrapper. |
 | **#show-what-you-built** | Editor extensions, harness wrappers, CI actions, experiments. Post it here first; we pull featured entries into the README from what shows up. |
 | **#context-failures** | An agent read the wrong context and did the wrong thing. The rawest, most useful signal this project gets. |
-| **🔊 gctx office hours** | Voice. Screen-share a repository, run `gctx` on a task you know the answer to, and argue with the result live. |
+| **🔊 gammx office hours** | Voice. Screen-share a repository, run `gammx` on a task you know the answer to, and argue with the result live. |
 
 **One routing rule worth honouring:** a good context failure that only ever
 exists in `#context-failures` is lost the moment it scrolls. Talk it
@@ -56,7 +56,7 @@ Not a bug report about OpenContextually — a case where *any* coding agent
 did the wrong thing because it was working from the wrong files. Those are
 the ground truth this project is built to chase, and they are almost
 impossible to synthesize convincingly. Whether or not you were running
-`gctx` at the time, the case is useful.
+`gammx` at the time, the case is useful.
 
 What makes one good: the task as you actually phrased it, what the agent
 read, what it should have read, and whether we can reproduce it on a public

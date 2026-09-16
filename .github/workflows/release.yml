@@ -70,11 +70,11 @@ jobs:
 
           PACKAGE_VERSION="$(/tmp/wheel-smoke-venv/bin/python -c "import importlib.metadata as m; print(m.version('opencontextually'))")"
           MODULE_VERSION="$(/tmp/wheel-smoke-venv/bin/python -c "import opencontextually; print(opencontextually.__version__)")"
-          CLI_VERSION="$(/tmp/wheel-smoke-venv/bin/gctx --version | awk '{print $2}')"
+          CLI_VERSION="$(/tmp/wheel-smoke-venv/bin/gammx --version | awk '{print $2}')"
 
           echo "package metadata: $PACKAGE_VERSION"
           echo "opencontextually.__version__: $MODULE_VERSION"
-          echo "gctx --version: $CLI_VERSION"
+          echo "gammx --version: $CLI_VERSION"
 
           test "$PACKAGE_VERSION" = "$MODULE_VERSION"
           test "$PACKAGE_VERSION" = "$CLI_VERSION"

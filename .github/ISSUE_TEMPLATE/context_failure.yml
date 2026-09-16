@@ -76,11 +76,11 @@ body:
     validations:
       required: false
   - type: textarea
-    id: gctx-output
+    id: gammx-output
     attributes:
-      label: What gctx returns for the same task (optional)
+      label: What gammx returns for the same task (optional)
       description: |
-        If you have it installed, run `gctx "<the task>"` in that repository
+        If you have it installed, run `gammx "<the task>"` in that repository
         and paste the output. Useful either way — if it picks the right
         files, that is a case we can lock in; if it does not, that is a bug.
     validations:

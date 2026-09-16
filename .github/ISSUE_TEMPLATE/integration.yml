@@ -1,5 +1,5 @@
 name: Integration
-description: Something you built with gctx, or an integration you would like to see exist.
+description: Something you built with gammx, or an integration you would like to see exist.
 labels: ["integration"]
 body:
   - type: markdown
@@ -10,7 +10,7 @@ body:
         proposing an integration you would like someone to build.
 
         Integrations live in **your** repository. The stable interfaces to
-        build against are `gctx --json` and the `opencontextually-mcp`
+        build against are `gammx --json` and the `opencontextually-mcp`
         stdio server, which exposes one tool: `get_context(task, root)`.
   - type: dropdown
     id: kind
@@ -39,7 +39,7 @@ body:
     id: what
     attributes:
       label: What it does
-      description: One or two sentences — what a user gets, and where gctx fits in.
+      description: One or two sentences — what a user gets, and where gammx fits in.
     validations:
       required: true
   - type: input
@@ -54,10 +54,10 @@ body:
     attributes:
       label: Which interface does it use?
       options:
-        - "gctx --json"
+        - "gammx --json"
         - "MCP server (opencontextually-mcp)"
         - "Python API (get_context)"
-        - "gctx plain-text output"
+        - "gammx plain-text output"
         - "Not built yet / undecided"
     validations:
       required: true

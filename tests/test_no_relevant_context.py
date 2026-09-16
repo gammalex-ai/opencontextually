@@ -75,7 +75,7 @@ def test_related_task_still_finds_the_conflict():
 # out of `find_test_reference_gaps` immediately -- still reported
 # "Checks run: configuration_discrepancy, test_reference_gap" in the
 # footer and both rule ids in the JSON. Found by running
-# `octx "zzzqqxx nonexistentterm"` against this fixture. A machine
+# `gammx "zzzqqxx nonexistentterm"` against this fixture. A machine
 # consumer reads `trace` to know what was actually evaluated, so this was
 # not merely cosmetic.
 

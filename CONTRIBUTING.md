@@ -114,7 +114,7 @@ sending a PR.
 
 Integrations are the exception to most of this: they live in *your*
 repository, not this one, and are not bound by the scope rules above. Build
-against `gctx --json` or the MCP server, then
+against `gammx --json` or the MCP server, then
 [tell us](https://github.com/gammalex-ai/opencontextually/issues/new?template=integration.yml)
 so it can be listed in the README's Ecosystem section.
 

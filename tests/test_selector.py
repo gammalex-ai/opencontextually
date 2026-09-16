@@ -298,7 +298,7 @@ def test_large_source_file_with_symbols_still_ranks(tmp_path):
     file whose content is dense with matching def/class definitions must
     not be penalized as if it were a data dump merely for being over
     LARGE_FILE_BYTES. Reproduces the shape of the real bug (selector.py,
-    85,609 bytes, omitted from `octx "the redaction masks ordinary code"`
+    85,609 bytes, omitted from `gammx "the redaction masks ordinary code"`
     despite implementing redact_text/_redact_line) as a small, fast
     fixture: a >LARGE_FILE_BYTES .py file with many task-matching defs,
     padded out with matching prose so its *undamped* content score alone

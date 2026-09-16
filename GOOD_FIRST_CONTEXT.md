@@ -5,14 +5,14 @@ invented to look welcoming — every item is either an open failure we have
 measured or a gap we know is there.
 
 New to the project? Read the
-[Quickstart](README.md#quickstart) first, run `gctx` on a repository you
+[Quickstart](README.md#quickstart) first, run `gammx` on a repository you
 know well, and see whether you agree with what it picked. Disagreeing
 usefully is itself a contribution.
 
 ## Bring a case — no code needed
 
 **Report a context failure.** An agent read the wrong files and did the
-wrong thing. Yours or anyone's, `gctx` involved or not.
+wrong thing. Yours or anyone's, `gammx` involved or not.
 [Template.](https://github.com/gammalex-ai/opencontextually/issues/new?template=context_failure.yml)
 
 **Add a ContextBench case.** Pick a public repository we don't already
