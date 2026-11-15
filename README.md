@@ -19,7 +19,7 @@
 
 [Quickstart](#quickstart) · [How it works](#how-it-works) · [MCP](#mcp) · [Contributing](#contributing)
 
-[Discord](https://discord.gg/ZNqyQtz5cV) · [Discussions](https://github.com/gammalex-ai/opencontextually/discussions) · [ContextBench](benchmarks/README.md) · [Ecosystem](#ecosystem--community) · [Community](COMMUNITY.md)
+[Discussions](https://github.com/gammalex-ai/opencontextually/discussions) · [ContextBench](benchmarks/README.md) · [Ecosystem](#ecosystem--community) · [Community](COMMUNITY.md)
 
 </div>
 
